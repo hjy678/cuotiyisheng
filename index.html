@@ -95,16 +95,21 @@
 
 <div class="bar">
   <div class="seg" id="studentSeg"></div>
+  <button class="ghost" id="stuProfile">👤 档案</button>
   <button class="ghost" id="addStudent">＋学生</button>
   <div style="flex:1"></div>
-  <div class="seg" id="subjectSeg"></div>
+  <div class="seg" id="gradeSeg"></div>
 </div>
 <div class="bar">
+  <div class="seg" id="subjectSeg"></div>
+  <div style="flex:1"></div>
   <button class="primary" id="addBtn">＋ 录入错题</button>
-  <button class="ghost" id="quizBtn">📝 组卷复习</button>
+  <button class="ghost" id="quizBtn">📝 组卷</button>
+  <button class="ghost" id="reviewBtn">📅 日历</button>
+  <button class="ghost" id="preExamBtn">⚡ 考前速览</button>
   <button class="ghost" id="weakBtn">📉 薄弱点</button>
-  <button class="ghost" id="exportBtn">⬇ 导出/备份</button>
-  <button class="ghost" id="setBtn">⚙ 设置</button>
+  <button class="ghost" id="exportBtn">⬇ 备份</button>
+  <button class="ghost" id="setBtn">⚙</button>
 </div>
 
 <!-- 看板 -->
@@ -131,8 +136,27 @@
 </div>
 
 <div class="card">
-  <b>📈 掌握率趋势</b>
+  <div style="display:flex;justify-content:space-between;align-items:center">
+    <b>📈 掌握率趋势</b>
+    <div class="seg" id="trendSeg">
+      <button data-t="7" class="on">近7天</button>
+      <button data-t="30">近30天</button>
+      <button data-t="0">全部</button>
+    </div>
+  </div>
   <canvas id="trend" width="1000" height="320"></canvas>
+</div>
+
+<!-- 复习日历 -->
+<div class="card" id="calCard" style="display:none">
+  <div style="display:flex;justify-content:space-between;align-items:center">
+    <b>📅 复习日历</b>
+    <span class="mini">橙点=当日待复习题量 · 蓝框=今天</span>
+  </div>
+  <div id="calHead" style="display:flex;justify-content:space-between;align-items:center;margin:8px 0">
+    <button class="ghost" id="calPrev">‹</button><b id="calTitle"></b><button class="ghost" id="calNext">›</button>
+  </div>
+  <div id="calGrid" style="display:grid;grid-template-columns:repeat(7,1fr);gap:5px"></div>
 </div>
 
 <div class="card">
@@ -211,6 +235,35 @@
   </div>
 </div>
 
+<!-- 学生档案弹窗 -->
+<div class="modal" id="profileModal">
+  <div class="sheet">
+    <h3 id="profileTitle">👤 学生档案</h3>
+    <canvas id="profileTrend" width="1000" height="260" style="height:130px"></canvas>
+    <div id="profileKp" style="margin-top:10px"></div>
+    <div id="profileList" class="list" style="margin-top:10px;max-height:240px;overflow:auto"></div>
+    <div class="row" style="margin-top:12px"><button class="ghost" id="closeProfile">关闭</button></div>
+  </div>
+</div>
+
+<!-- 考前速览弹窗 -->
+<div class="modal" id="preExamModal">
+  <div class="sheet">
+    <h3>⚡ 考前速览</h3>
+    <div class="mini">一键汇总：今日待复习 + 近期薄弱，打印给孩子快速过一遍。</div>
+    <div class="row" style="margin:10px 0">
+      <label style="margin:0">范围</label>
+      <select id="preScope"><option value="all">全部科目</option><option value="weak">仅薄弱</option></select>
+      <button class="primary" id="genPre">生成速览</button>
+    </div>
+    <div id="preBody" class="quiz"></div>
+    <div class="row" style="margin-top:10px">
+      <button class="ghost" id="printPre">🖨 打印</button>
+      <button class="ghost" id="closePre">关闭</button>
+    </div>
+  </div>
+</div>
+
 <!-- 设置弹窗 -->
 <div class="modal" id="setModal">
   <div class="sheet">
@@ -255,7 +308,7 @@ function save(d){localStorage.setItem(DB_KEY,JSON.stringify(d))}
 function loadCfg(){try{return JSON.parse(localStorage.getItem(CFG_KEY))||{ai:false}}catch(e){return{ai:false}}}
 function saveCfg(c){localStorage.setItem(CFG_KEY,JSON.stringify(c))}
 let D=load(), CFG=loadCfg();
-let curStu=D.students[0], curSub="全部", curFilter="all";
+let curStu=D.students[0], curSub="全部", curGrade="全部", curFilter="all";
 
 /* ============ 预置知识点（PEP人教版 + 荣波/荣海） ============ */
 // 按"科目"归类，录入时按当前科目显示可点选标签，减少手填
@@ -301,13 +354,18 @@ function renderKpTags(){
 function pickKp(t){document.getElementById('fKp').value=t;}
 
 /* ============ SRS ============ */
-const INTERVALS=[1,2,4,7,15,30]; // 连续对了之后下次间隔天数
+// 间隔复习：今天对→1天→3天→7天→15天→30天；错→明天(1天)重来。贴合小学高频巩固记忆规律
+const INTERVALS=[1,3,7,15,30];
+// 本地日期（避免 toISOString 的 UTC 偏移导致"今天"算错/复习日错位，东八区尤其明显）
+function localDate(d){d=d||new Date();const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,'0'),da=String(d.getDate()).padStart(2,'0');return y+'-'+m+'-'+da}
+function addDaysLocal(s,n){const d=new Date(s+'T00:00:00');d.setDate(d.getDate()+n);return localDate(d)}
+function todayStr(){return localDate()}
 function nextReview(err, correct){
   if(correct){ err.level=Math.min(err.level+1, INTERVALS.length-1); }
   else { err.level=0; }
   const days=INTERVALS[err.level];
-  err.next=new Date(Date.now()+days*864e5).toISOString().slice(0,10);
-  err.last=new Date().toISOString().slice(0,10);
+  err.next=addDaysLocal(localDate(), days);
+  err.last=localDate();
 }
 function masteryOf(err){
   // 掌握度：正确率(近因) + 连续答对带来的置信加权，0~1
@@ -321,7 +379,6 @@ function masteryOf(err){
 /* ============ 工具 ============ */
 function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),1600)}
 function fmtDate(s){return s? s.slice(5):""}
-function todayStr(){return new Date().toISOString().slice(0,10)}
 function escapeHtml(s){return (s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))}
 function compressImg(file,maxDim,cb){
   const r=new FileReader();r.onload=e=>{const img=new Image();img.onload=()=>{
@@ -336,6 +393,7 @@ function visibleErrs(){
   return D.errs.filter(e=>{
     if(e.student!==curStu) return false;
     if(curSub!=="全部" && e.subject!==curSub) return false;
+    if(curGrade!=="全部" && (e.grade||"")!==curGrade) return false;
     if(curFilter==="today") return e.next<=todayStr();
     if(curFilter==="weak") return masteryOf(e)<0.6 && (e.reviews||0)>0 || ((e.reviews||0)===0);
     if(curFilter==="wrong") return (e.reviews||0)>0 && e.lastCorrect===false;
@@ -350,9 +408,14 @@ function render(){
   D.students.forEach(s=>{const b=document.createElement('button');b.textContent=s;b.className=s===curStu?'on':'';b.onclick=()=>{curStu=s;render()};ss.appendChild(b)});
   const sb=document.getElementById('subjectSeg');sb.innerHTML='';
   ["全部",...D.subjects].forEach(s=>{const b=document.createElement('button');b.textContent=s;b.className=s===curSub?'on':'';b.onclick=()=>{curSub=s;render()};sb.appendChild(b)});
+  // 年级段（从已有数据动态提取 + 预置常见年级）
+  const gb=document.getElementById('gradeSeg');gb.innerHTML='';
+  const grades=["全部","一年级","二年级","三年级","四年级","五年级","六年级","初一","初二","初三"];
+  const existG=new Set(D.errs.filter(e=>e.student===curStu&&e.grade).map(e=>e.grade));
+  [...new Set([...grades,...existG])].forEach(g=>{const b=document.createElement('button');b.textContent=g;b.className=g===curGrade?'on':'';b.onclick=()=>{curGrade=g;render()};gb.appendChild(b)});
   // 统计
   const mine=D.errs.filter(e=>e.student===curStu);
-  const subMine=curSub==="全部"?mine:mine.filter(e=>e.subject===curSub);
+  const subMine=mine.filter(e=>(curSub==="全部"||e.subject===curSub)&&(curGrade==="全部"||(e.grade||"")===curGrade));
   document.getElementById('sTotal').textContent=subMine.length;
   const reviewed=subMine.filter(e=>(e.reviews||0)>0);
   const avgM=subMine.length? subMine.reduce((a,e)=>a+masteryOf(e),0)/subMine.length:0;
@@ -399,10 +462,10 @@ function render(){
   document.getElementById('filterTip').textContent={all:"全部",today:"今日待复习",weak:"薄弱",wrong:"近期错的"}[curFilter];
   drawTrend(subMine);
 }
+let trendWindow=7;
 function drawTrend(arr){
   const cv=document.getElementById('trend');const ctx=cv.getContext('2d');
   ctx.clearRect(0,0,cv.width,cv.height);
-  // 收集每日掌握率快照（按首次录入后每日估算不便，这里用"按录入日期累计的滚动掌握率"近似）
   const byDay={};
   arr.slice().sort((a,b)=>(a.created||"").localeCompare(b.created||"")).forEach(e=>{
     const day=(e.created||todayStr()).slice(0,10);
@@ -410,10 +473,21 @@ function drawTrend(arr){
   });
   const days=Object.keys(byDay).sort();
   if(days.length<1){ctx.fillStyle='#6b6385';ctx.font='14px sans-serif';ctx.fillText('录入错题后这里会显示掌握率趋势',20,40);return}
-  const pts=[];let acc=[];
-  days.forEach(d=>{acc=acc.concat(byDay[d]);const m=acc.length?acc.reduce((a,e)=>a+masteryOf(e),0)/acc.length:0;pts.push({d,m})});
-  const W=cv.width,H=cv.height,pad=40;
-  const maxM=1;
+  // 滚动累计掌握率快照
+  let acc=[];const snap={};
+  days.forEach(d=>{acc=acc.concat(byDay[d]);snap[d]=acc.length?acc.reduce((a,e)=>a+masteryOf(e),0)/acc.length:0;});
+  // 构建时间窗口
+  const today=new Date();today.setHours(0,0,0,0);
+  let start;
+  if(trendWindow>0){start=new Date(today);start.setDate(start.getDate()-(trendWindow-1));}
+  else {start=new Date(days[0]);}
+  const pts=[];let lastM=0;
+  for(let d=new Date(start);d<=today;d.setDate(d.getDate()+1)){
+    const key=localDate(d);
+    if(snap[key]!==undefined) lastM=snap[key];
+    pts.push({d:key,m:lastM});
+  }
+  const W=cv.width,H=cv.height,pad=40,maxM=1;
   ctx.strokeStyle='#ffe1ef';ctx.lineWidth=1;
   for(let i=0;i<=4;i++){const y=pad+(H-2*pad)*i/4;ctx.beginPath();ctx.moveTo(pad,y);ctx.lineTo(W-pad,y);ctx.stroke();
     ctx.fillStyle='#6b6385';ctx.font='11px sans-serif';ctx.fillText((100-i*25)+'%',6,y+4);}
@@ -421,8 +495,112 @@ function drawTrend(arr){
   pts.forEach((p,i)=>{const x=pad+(W-2*pad)*i/(pts.length-1||1);const y=pad+(H-2*pad)*(1-p.m/maxM);i?ctx.lineTo(x,y):ctx.moveTo(x,y);});
   ctx.stroke();
   ctx.fillStyle='#2b2540';ctx.font='11px sans-serif';
-  pts.forEach((p,i)=>{if(i%Math.ceil(pts.length/6)===0||i===pts.length-1){const x=pad+(W-2*pad)*i/(pts.length-1||1);ctx.fillText(p.d.slice(5),x-12,H-12);}});
+  const step=Math.max(1,Math.ceil(pts.length/6));
+  pts.forEach((p,i)=>{if(i%step===0||i===pts.length-1){const x=pad+(W-2*pad)*i/(pts.length-1||1);ctx.fillText(p.d.slice(5),x-12,H-12);}});
 }
+
+/* ============ 趋势窗口切换 ============ */
+document.querySelectorAll('#trendSeg button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('#trendSeg button').forEach(x=>x.classList.remove('on'));b.classList.add('on');
+  trendWindow=+b.dataset.t;render();
+});
+
+/* ============ 复习日历 ============ */
+let calY,calM;
+function openCal(){const t=new Date();calY=t.getFullYear();calM=t.getMonth();renderCal();document.getElementById('calCard').style.display='block';window.scrollTo({top:document.getElementById('calCard').offsetTop-20,behavior:'smooth'});}
+function renderCal(){
+  const grid=document.getElementById('calGrid');const title=document.getElementById('calTitle');
+  title.textContent=calY+'年'+(calM+1)+'月';
+  const first=new Date(calY,calM,1);const startDay=(first.getDay()+6)%7; // 周一为始
+  const daysInMonth=new Date(calY,calM+1,0).getDate();
+  const todayS=todayStr();
+  // 统计本月每日待复习量
+  const dueMap={};
+  D.errs.filter(e=>e.student===curStu&&(curSub==="全部"||e.subject===curSub)&&(curGrade==="全部"||(e.grade||"")===curGrade)).forEach(e=>{
+    if(e.next){const m=e.next.slice(0,7);dueMap[m]=dueMap[m]||{};dueMap[m][e.next]=(dueMap[m][e.next]||0)+1;}
+  });
+  const wk=['一','二','三','四','五','六','日'];
+  let html=wk.map(w=>`<div style="text-align:center;font-size:11px;color:var(--sub)">${w}</div>`).join('');
+  for(let i=0;i<startDay;i++)html+='<div></div>';
+  for(let d=1;d<=daysInMonth;d++){
+    const ds=`${calY}-${String(calM+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const isToday=ds===todayS;
+    const n=dueMap[ds.slice(0,7)]?.[ds]||0;
+    const dot=n?`<span style="position:absolute;top:2px;right:4px;background:var(--orange);color:#fff;border-radius:99px;font-size:10px;padding:0 5px">${n}</span>`:'';
+    html+=`<div onclick="calDay('${ds}')" style="position:relative;height:42px;border-radius:10px;background:#fff8fc;border:${isToday?'3px solid var(--blue)':'1px solid var(--line)'};display:flex;align-items:center;justify-content:center;font-size:13px;cursor:pointer">${d}${dot}</div>`;
+  }
+  grid.innerHTML=html;
+}
+function calDay(ds){curFilter='today';document.querySelectorAll('.nav button').forEach(x=>x.classList.toggle('on',x.dataset.f==='today'));
+  // 临时只看该天：用全部范围再筛
+  document.getElementById('calCard').style.display='none';
+  const vis=D.errs.filter(e=>e.student===curStu&&e.next===ds);
+  const list=document.getElementById('errList');list.innerHTML='';
+  if(!vis.length){list.innerHTML='<div class="mini">'+ds+' 没有待复习错题。</div>';}
+  else vis.forEach(e=>{const div=document.createElement('div');div.className='item';
+    const img=e.img?`<img class="thumb" src="${e.img}" onclick="openDetail('${e.id}')">`:'<div class="thumb" style="display:flex;align-items:center;justify-content:center;font-size:22px">📄</div>';
+    div.innerHTML=`${img}<div class="body"><div class="q">${escapeHtml(e.question||'(图片题)')}</div><div class="meta"><span class="badge">${escapeHtml(e.subject||'')}</span><span class="badge">${escapeHtml(e.kp||'未分类')}</span></div></div><button class="ghost" onclick="openDetail('${e.id}')">详情</button>`;
+    list.appendChild(div);});
+  toast(ds+' 待复习 '+vis.length+' 题');
+}
+document.getElementById('calPrev').onclick=()=>{calM--;if(calM<0){calM=11;calY--;}renderCal();};
+document.getElementById('calNext').onclick=()=>{calM++;if(calM>11){calM=0;calY++;}renderCal();};
+
+/* ============ 考前速览 ============ */
+document.getElementById('preExamBtn').onclick=()=>{document.getElementById('preExamModal').classList.add('show');};
+document.getElementById('closePre').onclick=()=>document.getElementById('preExamModal').classList.remove('show');
+document.getElementById('genPre').onclick=()=>{
+  const scope=document.getElementById('preScope').value;
+  let pool=D.errs.filter(e=>e.student===curStu&&(curSub==="全部"||e.subject===curSub)&&(curGrade==="全部"||(e.grade||"")===curGrade));
+  if(scope==="weak")pool=pool.filter(e=>masteryOf(e)<0.8);
+  else pool=pool.filter(e=>e.next<=todayStr()||masteryOf(e)<0.8); // 今日待复习+薄弱
+  pool.sort((a,b)=>masteryOf(a)-masteryOf(b));
+  const body=document.getElementById('preBody');
+  if(!pool.length){body.innerHTML='<div class="mini">暂无需要速览的错题 🎉</div>';return;}
+  body.innerHTML='';
+  pool.forEach((e,i)=>{const div=document.createElement('div');div.className='qbox';
+    div.innerHTML=`${e.img?`<img src="${e.img}" style="max-width:100%;border-radius:10px;max-height:140px;margin-bottom:6px">`:''}
+      <div class="qtext">${i+1}. ${escapeHtml(e.question||'(见图片)')}</div>
+      <div class="mini">知识点：${escapeHtml(e.kp||'未分类')} ｜ 掌握${Math.round(masteryOf(e)*100)}%</div>`;
+    body.appendChild(div);});
+  toast('速览生成 '+pool.length+' 题');
+};
+document.getElementById('printPre').onclick=()=>{const w=window.open('','_blank');let h='<h2>考前速览 · '+curStu+'</h2>';document.querySelectorAll('#preBody .qbox').forEach((b,i)=>{h+=b.outerHTML;});w.document.write(h+'<script>window.print()<\/script>');w.document.close();};
+
+/* ============ 学生档案 ============ */
+document.getElementById('stuProfile').onclick=()=>{
+  const stu=curStu;const mine=D.errs.filter(e=>e.student===stu);
+  document.getElementById('profileTitle').textContent='👤 '+stu+' 的档案';
+  // 专属趋势（用全局drawTrend思路，限定该生全部）
+  const cv=document.getElementById('profileTrend');const ctx=cv.getContext('2d');ctx.clearRect(0,0,cv.width,cv.height);
+  const byDay={};mine.slice().sort((a,b)=>(a.created||"").localeCompare(b.created||"")).forEach(e=>{const d=(e.created||todayStr()).slice(0,10);byDay[d]=byDay[d]||[];byDay[d].push(e);});
+  const days=Object.keys(byDay).sort();
+  const W=cv.width,H=cv.height,pad=30;
+  if(days.length){let acc=[];const snap={};days.forEach(d=>{acc=acc.concat(byDay[d]);snap[d]=acc.reduce((a,e)=>a+masteryOf(e),0)/acc.length;});
+    const today=new Date();today.setHours(0,0,0,0);const pts=[];let lm=0;
+    for(let x=new Date(days[0]);x<=today;x.setDate(x.getDate()+1)){const k=localDate(x);if(snap[k]!==undefined)lm=snap[k];pts.push({d:k,m:lm});}
+    ctx.strokeStyle='#ffe1ef';for(let i=0;i<=4;i++){const y=pad+(H-2*pad)*i/4;ctx.beginPath();ctx.moveTo(pad,y);ctx.lineTo(W-pad,y);ctx.stroke();}
+    ctx.strokeStyle='#7c4dff';ctx.lineWidth=3;ctx.beginPath();
+    pts.forEach((p,i)=>{const xx=pad+(W-2*pad)*i/(pts.length-1||1);const yy=pad+(H-2*pad)*(1-p.m);i?ctx.lineTo(xx,yy):ctx.moveTo(xx,yy);});ctx.stroke();
+  } else {ctx.fillStyle='#6b6385';ctx.font='14px sans-serif';ctx.fillText('暂无数据',20,30);}
+  // 知识点进度
+  const kpMap={};mine.forEach(e=>{const k=e.kp||"未分类";kpMap[k]=kpMap[k]||[];kpMap[k].push(e);});
+  const pk=document.getElementById('profileKp');pk.innerHTML='<b>知识点进度</b>';
+  Object.keys(kpMap).forEach(k=>{const arr=kpMap[k];const rev=arr.filter(e=>(e.reviews||0)>0);const m=rev.length?rev.reduce((a,e)=>a+masteryOf(e),0)/rev.length:0;const pct=Math.round(m*100);
+    pk.innerHTML+=`<div class="kp"><div class="top"><span>${escapeHtml(k)}</span><span>${pct}%</span></div><div class="track"><div class="fill" style="width:${pct}%;background:${m>=0.8?'var(--green)':m>=0.6?'var(--yellow)':'var(--red)'}"></div></div></div>`;});
+  if(!Object.keys(kpMap).length)pk.innerHTML+='<div class="mini">还没有错题</div>';
+  // 错题清单
+  const pl=document.getElementById('profileList');pl.innerHTML='';
+  mine.slice().sort((a,b)=>(b.created||"").localeCompare(a.created||"")).forEach(e=>{
+    const div=document.createElement('div');div.className='item';
+    const img=e.img?`<img class="thumb" src="${e.img}" onclick="openDetail('${e.id}')">`:'<div class="thumb" style="display:flex;align-items:center;justify-content:center;font-size:20px">📄</div>';
+    div.innerHTML=`${img}<div class="body"><div class="q">${escapeHtml(e.question||'(图片)')}</div><div class="meta"><span class="badge">${escapeHtml(e.subject||'')}</span><span class="badge">${escapeHtml(e.kp||'')}</span> 掌握${Math.round(masteryOf(e)*100)}%</div></div>`;
+    pl.appendChild(div);});
+  document.getElementById('profileModal').classList.add('show');
+};
+document.getElementById('closeProfile').onclick=()=>document.getElementById('profileModal').classList.remove('show');
+
+document.getElementById('reviewBtn').onclick=openCal;
 
 /* ============ 录入 ============ */
 let pendingImg=null;
@@ -461,7 +639,7 @@ document.getElementById('saveErr').onclick=()=>{
     stu:document.getElementById('fStu').value.trim(), ans:document.getElementById('fAns').value.trim(),
     reason:document.getElementById('fReason').value.trim(),
     similar:(window._lastAI&&window._lastAI.similar)||[], guide:(window._lastAI&&window._lastAI.guide)||[],
-    img:pendingImg, created:new Date().toISOString(), next:todayStr(), level:0, reviews:0, correct:0, lastCorrect:null};
+    img:pendingImg, created:localDate(), next:todayStr(), level:0, reviews:0, correct:0, lastCorrect:null};
   window._lastAI=null;
   D.errs.push(e);save(D);document.getElementById('addModal').classList.remove('show');render();toast('已保存 ✅');
 };
@@ -474,8 +652,8 @@ document.getElementById('aiAnalyze').onclick=async()=>{
   const out=document.getElementById('aiOut');out.classList.remove('hidden');
   out.innerHTML='<div class="mini">🤖 正在分析…（仅发送题目文字，不上传图片）</div>';
   const prompt=`你是一位资深小学老师。针对一道错题，请严谨输出 JSON：
-{"reason":"错误原因(一句话,如:进位漏算/概念不清/审题错误)","correct":"正确答案","steps":"详细解题步骤","guide":["苏格拉底式引导提问1","2","3"],"similar":[{"level":"简单","q":"题","a":"答案"},{"level":"中等","q":"题","a":"答案"},{"level":"提升","q":"题","a":"答案"}]}
-科目/知识点:${kp}。原作答:${(document.getElementById('fStu').value.trim())||'未知'}。题目:${q}
+{"kp":"最贴切的知识点名称(从小学数学/语文/英语常见知识点中选,如:小数乘法/阅读理解/时态;若是复合知识点用'/'连接,如:小数乘法/进位)","reason":"错误原因(一句话,如:进位漏算/概念不清/审题错误)","correct":"正确答案","steps":"详细解题步骤","guide":["苏格拉底式引导提问1","2","3"],"similar":[{"level":"简单","q":"题","a":"答案"},{"level":"中等","q":"题","a":"答案"},{"level":"提升","q":"题","a":"答案"}]}
+科目:${document.getElementById('fSubject').value.trim()||'未知'}。用户填的知识点:${kp}（若为空或未填，请务必推断并填入kp）。原作答:${(document.getElementById('fStu').value.trim())||'未知'}。题目:${q}
 只返回 JSON，不要解释。`;
   try{
     const resp=await fetch(CFG.base,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+CFG.key},
@@ -487,6 +665,7 @@ document.getElementById('aiAnalyze').onclick=async()=>{
     const r=JSON.parse(m[0]);
     window._lastAI={similar:r.similar||[],guide:r.guide||[]}; // 供保存时写入
     // 回填
+    if(r.kp&&!document.getElementById('fKp').value)document.getElementById('fKp').value=r.kp; // 自动识别知识点（解决拍照后手动归类易错）
     if(r.correct&&!document.getElementById('fAns').value)document.getElementById('fAns').value=r.correct;
     if(r.reason&&!document.getElementById('fReason').value)document.getElementById('fReason').value=r.reason;
     let html=`<h4>🔍 错误原因</h4><pre>${escapeHtml(r.reason||'')}</pre>`;
