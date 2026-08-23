@@ -62,6 +62,8 @@
     cursor:pointer;background:#fff8fc}
   .drop.hot{background:#ffe9f4}
   .row{display:flex;gap:8px;flex-wrap:wrap}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .row2 label{font-size:12px;color:var(--sub);margin-bottom:2px;display:block}
   .ai{background:linear-gradient(135deg,#faf5ff,#fff0f7);border:2px solid #e9d5ff;border-radius:14px;padding:12px;margin-top:10px;font-size:13px;line-height:1.6}
   .ai h4{color:var(--purple);font-size:13px;margin:8px 0 4px}
   .ai pre{white-space:pre-wrap;font-family:inherit}
@@ -168,6 +170,7 @@
     <button data-f="today">今日待复习</button>
     <button data-f="weak">薄弱</button>
     <button data-f="wrong">近期错的</button>
+    <button data-f="stubborn">顽固</button>
   </div>
   <div class="list" id="errList"></div>
 </div>
@@ -187,6 +190,10 @@
     <label>孩子答案</label><input type="text" id="fStu" placeholder="选填">
     <label>正确答案</label><input type="text" id="fAns" placeholder="选填（不填则由AI或你补充）">
     <label>错误原因</label><input type="text" id="fReason" placeholder="选填，如：进位漏算 / 概念不清">
+    <div class="row2">
+      <div><label>错因类型</label><select id="fType"><option value="">未分类</option><option value="知识漏洞">知识漏洞</option><option value="思维偏差">思维偏差</option><option value="习惯缺陷">习惯缺陷</option></select></div>
+      <div><label>错因细分</label><input type="text" id="fTag" placeholder="如：进位漏算/审题遗漏"></div>
+    </div>
     <div class="row" style="margin-top:10px">
       <button class="primary" id="aiAnalyze">🤖 AI 分析（错因+举一反三）</button>
       <button class="ghost" id="saveErr">💾 保存</button>
@@ -211,6 +218,7 @@
       <select id="qScope"><option value="today">今日待复习</option><option value="weak">薄弱知识点</option><option value="all">全部错题</option></select>
       <label style="margin:0">数量</label>
       <input type="number" id="qNum" value="10" min="1" max="50" style="width:70px">
+      <label style="margin:0;display:flex;align-items:center;gap:4px"><input type="checkbox" id="qWithAns" style="width:auto"> 含答案</label>
       <button class="ghost" id="genQuiz">生成</button>
     </div>
     <div id="quizArea" class="quiz" style="margin-top:12px"></div>
@@ -275,7 +283,11 @@
     <label>API 地址（OpenAI 兼容）</label><input type="text" id="cfgBase" placeholder="https://api.xxx/v1/chat/completions">
     <label>模型名</label><input type="text" id="cfgModel" placeholder="如 gpt-4o / deepseek-chat">
     <label>API Key</label><input type="password" id="cfgKey" placeholder="仅存本机，不上传">
-    <div class="tip">数据全部存浏览器本地（localStorage）。AI 仅在点击"分析/组卷"时联网，且图片不会发送，只发送题目文字。</div>
+    <div class="row" style="align-items:center;margin-top:8px">
+      <span>模型支持"看图"(视觉)</span>
+      <div class="switch" id="visionSwitch"></div>
+    </div>
+    <div class="tip">数据全部存浏览器本地（localStorage）。AI 仅在点击"分析/组卷"时联网。<b>开启"看图"后，拍照的错题图片会随题目一起发给模型，实现"拍一张图→自动识别题干+知识点"；若模型不支持看图请关闭，否则会报错。</b></div>
     <div class="row" style="margin-top:12px">
       <button class="primary" id="saveCfg">保存设置</button>
       <button class="ghost" id="resetData">清空本机数据</button>
@@ -397,6 +409,7 @@ function visibleErrs(){
     if(curFilter==="today") return e.next<=todayStr();
     if(curFilter==="weak") return masteryOf(e)<0.6 && (e.reviews||0)>0 || ((e.reviews||0)===0);
     if(curFilter==="wrong") return (e.reviews||0)>0 && e.lastCorrect===false;
+    if(curFilter==="stubborn") return (e.consecutiveWrong||0)>=2;
     return true;
   });
 }
@@ -451,15 +464,16 @@ function render(){
     const div=document.createElement('div');div.className='item';
     const img=e.img?`<img class="thumb" src="${e.img}" onclick="zoom('${e.id}')">`:'<div class="thumb" style="display:flex;align-items:center;justify-content:center;font-size:22px">📄</div>';
     const lv=e.level||0;
+    const stubborn=(e.consecutiveWrong||0)>=2?'<span class="pill bad">🔴顽固</span>':'';
     div.innerHTML=`${img}<div class="body">
       <div class="q">${escapeHtml(e.question||'(图片题)')}</div>
-      <div class="meta"><span class="badge">${escapeHtml(e.subject||'')}</span><span class="badge">${escapeHtml(e.kp||'未分类')}</span>
+      <div class="meta"><span class="badge">${escapeHtml(e.subject||'')}</span><span class="badge">${escapeHtml(e.kp||'未分类')}</span>${stubborn}
       复习${e.reviews||0}次 · 掌握${Math.round(masteryOf(e)*100)}% · 下次 ${fmtDate(e.next)}</div>
     </div><button class="ghost" onclick="openDetail('${e.id}')">详情</button>`;
     list.appendChild(div);
   });
   if(!vis.length) list.innerHTML='<div class="mini">没有符合条件的错题。</div>';
-  document.getElementById('filterTip').textContent={all:"全部",today:"今日待复习",weak:"薄弱",wrong:"近期错的"}[curFilter];
+  document.getElementById('filterTip').textContent={all:"全部",today:"今日待复习",weak:"薄弱",wrong:"近期错的",stubborn:"顽固"}[curFilter];
   drawTrend(subMine);
 }
 let trendWindow=7;
@@ -610,6 +624,7 @@ function openAdd(){
   document.getElementById('fGrade').value="";
   document.getElementById('fKp').value="";document.getElementById('fQuestion').value="";
   document.getElementById('fStu').value="";document.getElementById('fAns').value="";document.getElementById('fReason').value="";
+  document.getElementById('fType').value="";document.getElementById('fTag').value="";
   document.getElementById('aiOut').classList.add('hidden');document.getElementById('aiOut').innerHTML="";
   pendingImg=null;document.getElementById('prev').classList.add('hidden');
   renderKpTags();
@@ -638,8 +653,9 @@ document.getElementById('saveErr').onclick=()=>{
     kp, question:document.getElementById('fQuestion').value.trim(),
     stu:document.getElementById('fStu').value.trim(), ans:document.getElementById('fAns').value.trim(),
     reason:document.getElementById('fReason').value.trim(),
+    errType:document.getElementById('fType').value.trim(), errTag:document.getElementById('fTag').value.trim(),
     similar:(window._lastAI&&window._lastAI.similar)||[], guide:(window._lastAI&&window._lastAI.guide)||[],
-    img:pendingImg, created:localDate(), next:todayStr(), level:0, reviews:0, correct:0, lastCorrect:null};
+    img:pendingImg, created:localDate(), next:todayStr(), level:0, reviews:0, correct:0, lastCorrect:null, consecutiveWrong:0};
   window._lastAI=null;
   D.errs.push(e);save(D);document.getElementById('addModal').classList.remove('show');render();toast('已保存 ✅');
 };
@@ -647,35 +663,64 @@ document.getElementById('saveErr').onclick=()=>{
 /* ============ AI 分析 ============ */
 document.getElementById('aiAnalyze').onclick=async()=>{
   if(!CFG.ai){toast('请先在设置里开启 AI 并填 API');document.getElementById('setModal').classList.add('show');return;}
+  const hasImg=!!pendingImg;
+  if(CFG.vision && hasImg){
+    return aiAnalyzeVision();
+  }
+  return aiAnalyzeText();
+};
+// 纯文字模式（不发图片）
+async function aiAnalyzeText(){
   const q=document.getElementById('fQuestion').value.trim()||"（见图片，请基于知识点推测）";
   const kp=document.getElementById('fKp').value.trim()||"（未指定）";
   const out=document.getElementById('aiOut');out.classList.remove('hidden');
-  out.innerHTML='<div class="mini">🤖 正在分析…（仅发送题目文字，不上传图片）</div>';
+  out.innerHTML='<div class="mini">🤖 正在分析…（仅发送题目文字）</div>';
   const prompt=`你是一位资深小学老师。针对一道错题，请严谨输出 JSON：
-{"kp":"最贴切的知识点名称(从小学数学/语文/英语常见知识点中选,如:小数乘法/阅读理解/时态;若是复合知识点用'/'连接,如:小数乘法/进位)","reason":"错误原因(一句话,如:进位漏算/概念不清/审题错误)","correct":"正确答案","steps":"详细解题步骤","guide":["苏格拉底式引导提问1","2","3"],"similar":[{"level":"简单","q":"题","a":"答案"},{"level":"中等","q":"题","a":"答案"},{"level":"提升","q":"题","a":"答案"}]}
+{"kp":"最贴切的知识点名称(从小学数学/语文/英语常见知识点中选,如:小数乘法/阅读理解/时态;若是复合知识点用'/'连接,如:小数乘法/进位)","type":"错因类型(从[知识漏洞,思维偏差,习惯缺陷]中选一个)","tag":"错因细分(如:进位漏算/概念不清/审题遗漏/思路空白,最多6字)","reason":"错误原因(一句话)","correct":"正确答案","steps":"详细解题步骤","guide":["苏格拉底式引导提问1","2","3"],"similar":[{"level":"简单","q":"题","a":"答案"},{"level":"中等","q":"题","a":"答案"},{"level":"提升","q":"题","a":"答案"}]}
 科目:${document.getElementById('fSubject').value.trim()||'未知'}。用户填的知识点:${kp}（若为空或未填，请务必推断并填入kp）。原作答:${(document.getElementById('fStu').value.trim())||'未知'}。题目:${q}
 只返回 JSON，不要解释。`;
+  await callAI(prompt,out);
+}
+// 视觉模式（发图片，实现"拍照即识题"）
+async function aiAnalyzeVision(){
+  const out=document.getElementById('aiOut');out.classList.remove('hidden');
+  out.innerHTML='<div class="mini">🤖 正在识别图片并分析…（已发送题目图片）</div>';
+  const prompt=`你是一位资深小学老师。请先仔细识别这张错题图片中的题目内容（含题干、孩子作答、批改痕迹），然后严谨输出 JSON：
+{"question":"从图片中识别出的完整题干/题目文字(若图含手写作答也一并提取,不要臆造)","kp":"最贴切的知识点名称(如:小数乘法/阅读理解/时态;复合知识点用'/'连接)","type":"错因类型(从[知识漏洞,思维偏差,习惯缺陷]中选一个)","tag":"错因细分(如:进位漏算/概念不清/审题遗漏/思路空白,最多6字)","reason":"错误原因(一句话)","correct":"正确答案","steps":"详细解题步骤","guide":["苏格拉底式引导提问1","2","3"],"similar":[{"level":"简单","q":"题","a":"答案"},{"level":"中等","q":"题","a":"答案"},{"level":"提升","q":"题","a":"答案"}]}
+科目:${document.getElementById('fSubject').value.trim()||'未知'}。若图片已含题目,请务必把识别到的题干填入question字段。
+只返回 JSON，不要解释。`;
+  // 多模态：content 为数组，含文本+图片
+  const userContent=[{type:'text',text:prompt},{type:'image_url',image_url:{url:pendingImg}}];
+  await callAI(userContent,out,true);
+}
+// 通用 AI 调用：content 可为字符串(文字)或数组(多模态)
+async function callAI(content,out,isVision){
   try{
+    const messages=[{role:'user',content}];
     const resp=await fetch(CFG.base,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+CFG.key},
-      body:JSON.stringify({model:CFG.model,messages:[{role:'user',content:prompt}],temperature:0.3})});
-    if(!resp.ok){let detail='';try{detail=await resp.text();}catch(e){}throw new Error('HTTP '+resp.status+' '+(detail||'').slice(0,120));}
+      body:JSON.stringify({model:CFG.model,messages,temperature:0.3})});
+    if(!resp.ok){let detail='';try{detail=await resp.text();}catch(e){}throw new Error('HTTP '+resp.status+' '+(detail||'').slice(0,160));}
     let j;try{j=await resp.json();}catch(e){throw new Error('返回非JSON，请检查接口地址/模型名');}
     const text=j.choices?.[0]?.message?.content||"";
     const m=text.match(/\{[\s\S]*\}/);if(!m)throw new Error('模型未返回JSON');
     const r=JSON.parse(m[0]);
-    window._lastAI={similar:r.similar||[],guide:r.guide||[]}; // 供保存时写入
-    // 回填
-    if(r.kp&&!document.getElementById('fKp').value)document.getElementById('fKp').value=r.kp; // 自动识别知识点（解决拍照后手动归类易错）
+    window._lastAI={similar:r.similar||[],guide:r.guide||[]};
+    // 回填（视觉模式自动补题干）
+    if(isVision && r.question && !document.getElementById('fQuestion').value)document.getElementById('fQuestion').value=r.question;
+    if(r.kp&&!document.getElementById('fKp').value)document.getElementById('fKp').value=r.kp;
     if(r.correct&&!document.getElementById('fAns').value)document.getElementById('fAns').value=r.correct;
     if(r.reason&&!document.getElementById('fReason').value)document.getElementById('fReason').value=r.reason;
+    if(r.type&&!document.getElementById('fType').value)document.getElementById('fType').value=r.type;
+    if(r.tag&&!document.getElementById('fTag').value)document.getElementById('fTag').value=r.tag;
     let html=`<h4>🔍 错误原因</h4><pre>${escapeHtml(r.reason||'')}</pre>`;
+    if(r.type||r.tag)html+=`<div class="mini">错因类型：${escapeHtml(r.type||'—')} ｜ ${escapeHtml(r.tag||'—')}</div>`;
     html+=`<h4>📖 解题步骤</h4><pre>${escapeHtml(r.steps||'')}</pre>`;
     if(r.guide&&r.guide.length){html+='<h4>🤔 引导思考（苏格拉底式）</h4><pre>'+r.guide.map((g,i)=>(i+1)+'. '+escapeHtml(g)).join('\n')+'</pre>';}
     if(r.similar){html+='<h4>🎯 举一反三</h4>';r.similar.forEach(s=>{html+=`<div class="mini">【${escapeHtml(s.level)}】${escapeHtml(s.q)} ｜ 答案：${escapeHtml(s.a)}</div>`;});}
     out.innerHTML=html;out.dataset.similar=JSON.stringify(r.similar||[]);out.dataset.guide=JSON.stringify(r.guide||[]);
-    toast('AI 分析完成，已回填答案/错因');
-  }catch(err){out.innerHTML='<div class="mini">AI 调用失败：'+escapeHtml(err.message)+'。可手动填写后保存。</div>';}
-};
+    toast('AI 分析完成，已回填题干/答案/错因');
+  }catch(err){out.innerHTML='<div class="mini">AI 调用失败：'+escapeHtml(err.message)+'。可手动填写后保存。若提示图片相关错误，请在设置关闭"看图"。</div>';}
+}
 
 /* ============ 详情 ============ */
 function openDetail(id){
@@ -687,8 +732,8 @@ function openDetail(id){
     <div><b>科目/知识点：</b>${escapeHtml(e.subject)} / ${escapeHtml(e.kp)}</div>
     <div><b>题干：</b>${escapeHtml(e.question||'(图片)')}</div>
     <div><b>孩子答案：</b>${escapeHtml(e.stu||'—')} ｜ <b>正确答案：</b>${escapeHtml(e.ans||'—')}</div>
-    <div><b>错因：</b>${escapeHtml(e.reason||'—')}</div>
-    <div><b>复习：</b>${e.reviews||0}次 ｜ 掌握${Math.round(masteryOf(e)*100)}% ｜ 下次 ${fmtDate(e.next)}</div>`;
+    <div><b>错因：</b>${escapeHtml(e.reason||'—')}${e.errType?` ［${escapeHtml(e.errType)}${e.errTag?'/'+escapeHtml(e.errTag):''}］`:''}</div>
+    <div><b>复习：</b>${e.reviews||0}次 ｜ 掌握${Math.round(masteryOf(e)*100)}% ｜ 下次 ${fmtDate(e.next)} ${((e.consecutiveWrong||0)>=2)?'<span class="pill bad">🔴 顽固</span>':''}</div>`;
   if(e.guide&&e.guide.length)html+=`<h4>引导思考</h4><pre>${e.guide.map((g,i)=>(i+1)+'. '+escapeHtml(g)).join('\n')}</pre>`;
   if(e.similar&&e.similar.length){html+='<h4>举一反三</h4>';e.similar.forEach(s=>{html+=`<div class="mini">【${escapeHtml(s.level)}】${escapeHtml(s.q)} ｜ 答案：${escapeHtml(s.a)}</div>`;});}
   html+=`</div>`;
@@ -701,8 +746,8 @@ function openDetail(id){
   b.innerHTML=html;document.getElementById('detailModal').classList.add('show');
 }
 window.openDetail=openDetail;
-function markRight(id){const e=D.errs.find(x=>x.id===id);if(!e)return;e.reviews=(e.reviews||0)+1;e.correct=(e.correct||0)+1;e.lastCorrect=true;nextReview(e,true);save(D);render();document.getElementById('detailModal').classList.remove('show');toast('👍 已延长复习间隔')}
-function markWrong(id){const e=D.errs.find(x=>x.id===id);if(!e)return;e.reviews=(e.reviews||0)+1;e.lastCorrect=false;nextReview(e,false);save(D);render();document.getElementById('detailModal').classList.remove('show');toast('🔁 明天再练')}
+function markRight(id){const e=D.errs.find(x=>x.id===id);if(!e)return;e.reviews=(e.reviews||0)+1;e.correct=(e.correct||0)+1;e.lastCorrect=true;e.consecutiveWrong=0;nextReview(e,true);save(D);render();document.getElementById('detailModal').classList.remove('show');toast('👍 已延长复习间隔')}
+function markWrong(id){const e=D.errs.find(x=>x.id===id);if(!e)return;e.reviews=(e.reviews||0)+1;e.lastCorrect=false;e.consecutiveWrong=(e.consecutiveWrong||0)+1;nextReview(e,false);save(D);render();document.getElementById('detailModal').classList.remove('show');toast('🔁 明天再练')}
 function delErr(id){if(!confirm('确定删除这道错题？'))return;D.errs=D.errs.filter(x=>x.id!==id);save(D);render();document.getElementById('detailModal').classList.remove('show')}
 window.markRight=markRight;window.markWrong=markWrong;window.delErr=delErr;
 function zoom(id){openDetail(id)}
@@ -756,13 +801,30 @@ document.getElementById('submitQuiz').onclick=()=>{
     fb.className='fb '+(ok?'right':'wrong');
     fb.textContent=ok?'✅ 正确！':`❌ 正确答案：${a}`;
     if(ok)right++;
-    const e=D.errs.find(x=>x.id===it.id);if(e){e.reviews=(e.reviews||0)+1;if(ok)e.correct=(e.correct||0)+1;e.lastCorrect=ok;nextReview(e,ok);}
+    const e=D.errs.find(x=>x.id===it.id);if(e){e.reviews=(e.reviews||0)+1;if(ok){e.correct=(e.correct||0)+1;e.consecutiveWrong=0;}else{e.consecutiveWrong=(e.consecutiveWrong||0)+1;}e.lastCorrect=ok;nextReview(e,ok);}
   });
   save(D);render();
   toast(`判分完成：对 ${right}/${items.length}`);
 };
 function similar(u,a){if(!u)return false;if(u===a)return true;const nU=parseFloat(u),nA=parseFloat(a);if(!isNaN(nU)&&!isNaN(nA)&&Math.abs(nU-nA)<1e-6)return true;return a.includes(u)||u.includes(a);}
-document.getElementById('printQuiz').onclick=()=>{const w=window.open('','_blank');let h='<h2>复习卷 · '+curStu+'</h2>';window._quiz.forEach((it,i)=>{h+=`<p>${i+1}. ${escapeHtml(it.q)} ＿＿＿＿＿</p>`;});w.document.write(h+'<script>window.print()<\/script>');w.document.close();};
+document.getElementById('printQuiz').onclick=()=>{
+  const items=window._quiz||[];if(!items.length){toast('请先生成试卷');return;}
+  const withAns=document.getElementById('qWithAns').checked;
+  const w=window.open('','_blank');
+  let h='<!doctype html><html><head><meta charset="UTF-8"><title>复习卷 · '+curStu+'</title><style>'
+    +'@page{size:A4;margin:16mm}body{font-family:"Microsoft YaHei",sans-serif;color:#222;line-height:1.7}'
+    +'h2{text-align:center;margin:0 0 18px}.q{margin:0 0 14px;page-break-inside:avoid}.ans{color:#c0392b;margin-left:6px}'
+    +'img{max-width:100%;border-radius:6px;margin-bottom:6px}@media print{.noprint{display:none}}</style></head><body>';
+  h+=`<h2>复习卷 · ${escapeHtml(curStu)}</h2>`;
+  items.forEach((it,i)=>{
+    h+=`<div class="q">${it.img?`<img src="${it.img}"><br>`:''}${i+1}. ${escapeHtml(it.q)}`;
+    if(withAns) h+=` <span class="ans">【答案：${escapeHtml(it.a||'—')}】</span>`;
+    else h+=' ＿＿＿＿＿＿';
+    h+='</div>';
+  });
+  h+='<script>window.print()<\/script></body></html>';
+  w.document.write(h);w.document.close();
+};
 
 /* ============ 薄弱点 ============ */
 document.getElementById('weakBtn').onclick=()=>{
@@ -809,10 +871,12 @@ function download(content,name,type){const b=new Blob([content],{type});const u=
 document.getElementById('setBtn').onclick=()=>{
   document.getElementById('cfgBase').value=CFG.base||'';document.getElementById('cfgModel').value=CFG.model||'';
   document.getElementById('cfgKey').value=CFG.key||'';document.getElementById('aiSwitch').classList.toggle('on',!!CFG.ai);
+  document.getElementById('visionSwitch').classList.toggle('on',!!CFG.vision);
   document.getElementById('setModal').classList.add('show');
 };
 document.getElementById('closeSet').onclick=()=>document.getElementById('setModal').classList.remove('show');
 document.getElementById('aiSwitch').onclick=function(){this.classList.toggle('on');CFG.ai=this.classList.contains('on');saveCfg(CFG);};
+document.getElementById('visionSwitch').onclick=function(){this.classList.toggle('on');CFG.vision=this.classList.contains('on');saveCfg(CFG);};
 document.getElementById('saveCfg').onclick=()=>{
   CFG.base=document.getElementById('cfgBase').value.trim();CFG.model=document.getElementById('cfgModel').value.trim();CFG.key=document.getElementById('cfgKey').value.trim();
   saveCfg(CFG);document.getElementById('setModal').classList.remove('show');toast('设置已保存（仅存本机）');
