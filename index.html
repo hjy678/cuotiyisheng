@@ -318,6 +318,27 @@
   </div>
 </div>
 
+<div class="modal" id="bookModal">
+  <div class="sheet">
+    <h3>🖨 错题本打印 / 导出 PDF</h3>
+    <div class="row">
+      <label style="margin:0">范围</label>
+      <select id="bookScope">
+        <option value="cur">当前筛选</option>
+        <option value="all">全部错题</option>
+        <option value="today">今日待复习</option>
+        <option value="weak">薄弱</option>
+        <option value="wrong">近期错的</option>
+        <option value="stubborn">顽固</option>
+      </select>
+      <label style="margin:0;display:flex;align-items:center;gap:4px"><input type="checkbox" id="bookWithAns" style="width:auto"> 含答案</label>
+      <button class="primary" id="genBook">生成</button>
+    </div>
+    <div class="tip">生成后浏览器打开打印视图，按 Ctrl+P 选「另存为 PDF」即可导出。不勾「含答案」只显示题目（孩子自测），勾选则附答案（家长核对），实现答案分离。</div>
+    <div class="row" style="margin-top:10px"><button class="ghost" id="closeBook">关闭</button></div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
