@@ -111,6 +111,7 @@
   <button class="ghost" id="preExamBtn">⚡ 考前速览</button>
   <button class="ghost" id="weakBtn">📉 薄弱点</button>
   <button class="ghost" id="exportBtn">⬇ 备份</button>
+  <button class="ghost" id="bookBtn">🖨 错题本</button>
   <button class="ghost" id="setBtn">⚙</button>
 </div>
 
@@ -825,6 +826,50 @@ document.getElementById('printQuiz').onclick=()=>{
   h+='<script>window.print()<\/script></body></html>';
   w.document.write(h);w.document.close();
 };
+
+  /* ============ 错题本打印 / 导出 PDF ============ */
+  document.getElementById('bookBtn').onclick=()=>document.getElementById('bookModal').classList.add('show');
+  document.getElementById('closeBook').onclick=()=>document.getElementById('bookModal').classList.remove('show');
+  document.getElementById('genBook').onclick=()=>genErrBook();
+  function genErrBook(){
+    const scope=document.getElementById('bookScope').value;
+    const withAns=document.getElementById('bookWithAns').checked;
+    let pool = scope==="cur" ? visibleErrs().slice() : D.errs.filter(e=>e.student===curStu);
+    if(scope!=="cur" && scope!=="all"){
+      if(curSub!=="全部") pool=pool.filter(e=>e.subject===curSub);
+      if(curGrade!=="全部") pool=pool.filter(e=>(e.grade||"")===curGrade);
+    }
+    if(scope==="today") pool=pool.filter(e=>e.next<=todayStr());
+    else if(scope==="weak") pool=pool.filter(e=>masteryOf(e)<0.6);
+    else if(scope==="wrong") pool=pool.filter(e=>(e.reviews||0)>0 && e.lastCorrect===false);
+    else if(scope==="stubborn") pool=pool.filter(e=>(e.consecutiveWrong||0)>=2);
+    if(!pool.length){toast('没有可导出的错题');return;}
+    pool.sort((a,b)=>(a.created||"").localeCompare(b.created||""));
+    const w=window.open('','_blank');
+    let h='<!doctype html><html><head><meta charset="UTF-8"><title>错题本 · '+curStu+'</title><style>'
+      +'@page{size:A4;margin:16mm}body{font-family:"Microsoft YaHei",sans-serif;color:#222;line-height:1.7}'
+      +'h2{text-align:center;margin:0 0 6px}.meta{text-align:center;color:#888;font-size:13px;margin-bottom:18px}'
+      +'.q{margin:0 0 16px;padding-bottom:12px;border-bottom:1px dashed #ccc;page-break-inside:avoid}'
+      +'.q .h{font-weight:700;margin-bottom:4px}.q .info{color:#666;font-size:13px;margin:4px 0}'
+      +'.ans{color:#c0392b;margin-left:6px}.fill{color:#bbb}'
+      +'img{max-width:100%;border-radius:6px;margin:6px 0}@media print{.noprint{display:none}}</style></head><body>';
+    h+=`<h2>错题本 · ${escapeHtml(curStu)}</h2>`;
+    h+=`<div class="meta">科目：${escapeHtml(curSub)} ｜ 年级：${escapeHtml(curGrade)} ｜ 共 ${pool.length} 题 ｜ 生成日期 ${localDate()}</div>`;
+    pool.forEach((e,i)=>{
+      h+=`<div class="q">${e.img?`<img src="${e.img}"><br>`:''}<div class="h">${i+1}. ${escapeHtml(e.question||'(见图片)')}</div>`;
+      h+=`<div class="info">知识点：${escapeHtml(e.kp||'未分类')} ｜ 掌握${Math.round(masteryOf(e)*100)}%</div>`;
+      if(withAns){
+        h+=`<div class="info">孩子答案：${escapeHtml(e.stu||'—')} ｜ <span class="ans">正确答案：${escapeHtml(e.ans||'—')}</span></div>`;
+        if(e.reason)h+=`<div class="info">错因：${escapeHtml(e.reason||'')}</div>`;
+      } else {
+        h+=`<div class="info">正确答案：<span class="fill">＿＿＿＿＿＿</span></div>`;
+      }
+      h+='</div>';
+    });
+    h+='<script>window.print()<\/script></body></html>';
+    w.document.write(h);w.document.close();
+    toast('已生成错题本，按 Ctrl+P 另存为 PDF');
+  }
 
 /* ============ 薄弱点 ============ */
 document.getElementById('weakBtn').onclick=()=>{
