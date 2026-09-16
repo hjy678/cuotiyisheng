@@ -455,7 +455,7 @@ function render(){
   const gb=document.getElementById('gradeSeg');gb.innerHTML='';
   const grades=["全部","一年级","二年级","三年级","四年级","五年级","六年级","初一","初二","初三"];
   const existG=new Set(D.errs.filter(e=>e.student===curStu&&e.grade).map(e=>e.grade));
-  [...new Set([...grades,...existG])].forEach(g=>{const b=document.createElement('button');b.textContent=g;b.className=g===curGrade?'on':'';b.onclick=()=>{curGrade=g;render()};gb.appendChild(b)});
+  [...new Set([...grades,...existG])].forEach(g=>{const b=document.createElement('button');b.textContent=g;b.className=g===curGrade?'on':'';b.onclick=()=>{curGrade=g;render();const n=D.errs.filter(e=>e.student===curStu&&(curSub==="全部"||e.subject===curSub)&&(g==="全部"||(e.grade||"")===g)).length;toast('已筛选：'+g+'（'+n+' 题）')};gb.appendChild(b)});
   // 统计
   const mine=D.errs.filter(e=>e.student===curStu);
   const subMine=mine.filter(e=>(curSub==="全部"||e.subject===curSub)&&(curGrade==="全部"||(e.grade||"")===curGrade));
@@ -502,7 +502,12 @@ function render(){
     </div><button class="ghost" onclick="openDetail('${e.id}')">详情</button>`;
     list.appendChild(div);
   });
-  if(!vis.length) list.innerHTML='<div class="mini">没有符合条件的错题。</div>';
+  if(!vis.length){
+    const noG=mine.filter(e=>(curSub==="全部"||e.subject===curSub)&&!(e.grade||"").trim()).length;
+    let hint='没有符合条件的错题。';
+    if(curGrade!=="全部") hint='没有「'+curGrade+'」的错题。'+(noG?('有 '+noG+' 题录入时没填年级（点「全部」可以看到）。下次录入时在「年级」框填一下，就能按年级筛选了。'):'');
+    list.innerHTML='<div class="mini">'+hint+'</div>';
+  }
   document.getElementById('filterTip').textContent={all:"全部",today:"今日待复习",weak:"薄弱",wrong:"近期错的",stubborn:"顽固"}[curFilter];
   drawTrend(subMine);
 }
@@ -651,7 +656,10 @@ let pendingImg=null;
 function openAdd(){
   document.getElementById('addModal').classList.add('show');
   document.getElementById('fSubject').value=curSub==="全部"?"":curSub;
-  document.getElementById('fGrade').value="";
+  const gCnt={};D.errs.forEach(e=>{if(e.student===curStu&&e.grade){gCnt[e.grade]=(gCnt[e.grade]||0)+1}});
+  let preG=curGrade;const gKeys=Object.keys(gCnt);
+  if(preG==="全部"&&gKeys.length)preG=gKeys.sort((a,b)=>gCnt[b]-gCnt[a])[0];
+  document.getElementById('fGrade').value=preG==="全部"?"":preG;
   document.getElementById('fKp').value="";document.getElementById('fQuestion').value="";
   document.getElementById('fStu').value="";document.getElementById('fAns').value="";document.getElementById('fReason').value="";
   document.getElementById('fType').value="";document.getElementById('fTag').value="";
