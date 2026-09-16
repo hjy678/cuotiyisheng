@@ -351,20 +351,6 @@
       <button class="ghost" onclick="document.getElementById('actModal').classList.remove('show')">关闭</button>
       <button class="primary" onclick="doActivate()">激活</button>
     </div>
-    <div style="margin-top:10px;border-top:1px dashed var(--line);padding-top:8px" class="mini">作者入口：<a href="#" onclick="openAdmin();return false;">生成激活码</a></div>
-  </div>
-</div>
-<div class="modal" id="actAdminModal">
-  <div class="box">
-    <h3>作者 · 生成激活码</h3>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0">
-      <select id="adminPlan"><option value="pro">pro 会员</option><option value="vip">vip 终身</option></select>
-      <select id="adminDays"><option value="30">30天</option><option value="365">1年</option><option value="0">永久</option></select>
-      <button class="primary" onclick="doGen()">生成</button>
-    </div>
-    <textarea id="adminOut" readonly style="width:100%;height:64px;box-sizing:border-box;font-family:monospace"></textarea>
-    <div id="adminMsg" class="mini"></div>
-    <div style="text-align:right;margin-top:8px"><button class="ghost" onclick="document.getElementById('actAdminModal').classList.remove('show')">关闭</button></div>
   </div>
 </div>
 <div class="toast" id="toast"></div>
@@ -375,39 +361,27 @@
 </script>
 <script>
 // ===== 会员系统：AES 纯静态激活码，无后端、可离线 =====
-const ACT_MASTER='cuotiyisheng-act-2026-master-v1';
+const ACT_BACKEND='https://5257627c34c34da79750a6991e1b024f.app.workbuddy.link';
+const ACT_SYSTEM='cuotiyisheng';
 const ACT_STORE='cuotiyisheng_activation';
-function aesReady(){return typeof CryptoJS!=='undefined';}
 function getActivation(){try{return JSON.parse(localStorage.getItem(ACT_STORE)||'null');}catch(e){return null;}}
 function setActivation(a){localStorage.setItem(ACT_STORE,JSON.stringify(a));}
-function generateCode(plan,days){
-  if(!aesReady())throw new Error('加密库未加载');
-  const d=Number(days);
-  if(!isFinite(d)||d<0||Math.floor(d)!==d)throw new Error('有效期天数无效（须为0=永久或正整数）');
-  const payload=JSON.stringify({plan:plan,iat:Date.now(),exp:d>0?Date.now()+d*864e5:0});
-  return CryptoJS.AES.encrypt(payload,ACT_MASTER).toString();
-}
-function verifyCode(code){
-  if(!aesReady())return {ok:false,reason:'加密库未加载'};
-  try{
-    const txt=CryptoJS.AES.decrypt(code,ACT_MASTER).toString(CryptoJS.enc.Utf8);
-    if(!txt)return {ok:false,reason:'激活码无效（密钥不符）'};
-    const o=JSON.parse(txt);
-    if(o.exp&&o.exp<Date.now())return {ok:false,reason:'激活码已过期'};
-    return {ok:true,plan:o.plan||'pro',expire:o.exp||0};
-  }catch(e){return {ok:false,reason:'激活码格式无效'};}
-}
 function isActivated(){
   const a=getActivation();
   return !!(a&&(!a.expire||a.expire>Date.now()));
 }
 function fmtExp(exp){return exp? new Date(exp).toLocaleDateString('zh-CN'):'永久';}
+function deviceFp(){
+  let fp=localStorage.getItem('cuotiyisheng_fp');
+  if(!fp){fp='dev_'+Math.random().toString(36).slice(2,10)+Date.now().toString(36);localStorage.setItem('cuotiyisheng_fp',fp);}
+  return fp;
+}
 function renderMember(){
   const badge=document.getElementById('memberBadge');
   const st=document.getElementById('actState');
   const on=isActivated();
   if(badge)badge.style.display=on?'inline-block':'none';
-  if(st)st.textContent=on?('已激活 · '+(getActivation().plan||'pro')+' · 至 '+fmtExp(getActivation().expire)):'未激活 · 免费版';
+  if(st)st.textContent=on?('已激活 · '+(getActivation().plan||'会员')+' · 至 '+fmtExp(getActivation().expire)):'未激活 · 免费版';
   [['quizBtn','📝 组卷'],['bookBtn','🖨 错题本'],['preExamBtn','⚡ 考前速览']].forEach(function(p){
     const b=document.getElementById(p[0]);
     if(b)b.textContent=p[1]+(on?'':' 🔒');
@@ -426,21 +400,24 @@ function openAct(){
   const msg=document.getElementById('actMsg');if(msg)msg.textContent='';
 }
 function doActivate(){
-  const code=document.getElementById('actInput').value.trim();
-  const r=verifyCode(code);
+  const code=document.getElementById('actInput').value.trim().toUpperCase();
   const msg=document.getElementById('actMsg');
-  if(r.ok){setActivation({plan:r.plan,expire:r.expire,at:Date.now()});msg.style.color='#1a9';msg.textContent='✅ 激活成功！'+r.plan+' · 至 '+fmtExp(r.expire);renderMember();toast('会员已激活');setTimeout(function(){var mm=document.getElementById('actModal');if(mm)mm.classList.remove('show');},900);}
-  else{msg.style.color='#e33';msg.textContent='❌ '+r.reason;}
-}
-function openAdmin(){var m=document.getElementById('actAdminModal');if(m)m.classList.add('show');}
-function doGen(){
-  try{
-    const plan=document.getElementById('adminPlan').value;
-    const days=parseInt(document.getElementById('adminDays').value,10);
-    const code=generateCode(plan,days);
-    document.getElementById('adminOut').value=code;
-    document.getElementById('adminMsg').textContent='已生成（'+plan+' · '+(days?days+'天':'永久')+'）';
-  }catch(e){document.getElementById('adminMsg').textContent='生成失败：'+e.message;}
+  if(!code){msg.style.color='#e33';msg.textContent='请输入激活码';return;}
+  msg.style.color='';msg.textContent='联网验证中…';
+  fetch(ACT_BACKEND+'/api/redeem',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:code,fp:deviceFp(),system:ACT_SYSTEM})})
+    .then(function(r){return r.json();})
+    .then(function(j){
+      if(j.ok){
+        setActivation({plan:j.level,expire:j.expireAt||0,system:ACT_SYSTEM,at:Date.now()});
+        msg.style.color='#1a9';msg.textContent='✅ 激活成功！'+j.level+(j.expireAt?(' · 至 '+fmtExp(j.expireAt)):' · 永久');
+        renderMember();toast('会员已激活');
+        setTimeout(function(){var mm=document.getElementById('actModal');if(mm)mm.classList.remove('show');},900);
+      }else{
+        const reasons={not_found:'激活码无效，请检查后重试',void:'该激活码已作废',already_used:'该激活码已被使用（一码一用）',blacklisted:'该激活码已被停用',wrong_system:'该激活码不适用于当前系统'};
+        msg.style.color='#e33';msg.textContent='❌ '+(reasons[j.reason]||'激活失败');
+      }
+    })
+    .catch(function(e){msg.style.color='#e33';msg.textContent='⚠️ 联网验证失败，请检查网络后重试';});
 }
 
 </script>
