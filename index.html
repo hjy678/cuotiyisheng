@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>家庭错题医生 🩺</title>
+<title>错题小医生 🩺</title>
 <style>
   :root{
     --bg:#fff7fb; --card:#ffffff; --ink:#2b2540; --sub:#6b6385;
@@ -89,10 +89,18 @@
   .quiz .fb.wrong{background:#fee2e2;color:#b91c1c;display:block}
   .nav{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px}
   .nav button{flex:1;min-width:80px;text-align:center}
+  @media(max-width:680px){
+    .bar>div[style*="flex"]{display:none}
+    .bar{gap:6px}
+    .bar .seg{flex:1 1 100%;display:flex}
+    .bar .seg button{flex:1;min-width:0;padding:7px 4px;text-align:center}
+    .bar button{flex:1 1 30%;min-width:0;padding:9px 6px;font-size:13px;text-align:center;white-space:nowrap}
+    h1{font-size:20px}
+  }
 </style>
 </head>
 <body>
-<h1>🩺 家庭错题医生</h1>
+<h1>🩺 错题小医生</h1>
 <div class="sub">拍照录入 · AI 错因分析 · 举一反三 · 间隔复习 · 掌握度看板 ｜ 离线可用，数据存本机</div>
 
 <div class="bar">
@@ -540,7 +548,7 @@ function renderCal(){
   for(let d=1;d<=daysInMonth;d++){
     const ds=`${calY}-${String(calM+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
     const isToday=ds===todayS;
-    const n=dueMap[ds.slice(0,7)]?.[ds]||0;
+    const n=(dueMap[ds.slice(0,7)]||{})[ds]||0;
     const dot=n?`<span style="position:absolute;top:2px;right:4px;background:var(--orange);color:#fff;border-radius:99px;font-size:10px;padding:0 5px">${n}</span>`:'';
     html+=`<div onclick="calDay('${ds}')" style="position:relative;height:42px;border-radius:10px;background:#fff8fc;border:${isToday?'3px solid var(--blue)':'1px solid var(--line)'};display:flex;align-items:center;justify-content:center;font-size:13px;cursor:pointer">${d}${dot}</div>`;
   }
@@ -702,7 +710,7 @@ async function callAI(content,out,isVision){
       body:JSON.stringify({model:CFG.model,messages,temperature:0.3})});
     if(!resp.ok){let detail='';try{detail=await resp.text();}catch(e){}throw new Error('HTTP '+resp.status+' '+(detail||'').slice(0,160));}
     let j;try{j=await resp.json();}catch(e){throw new Error('返回非JSON，请检查接口地址/模型名');}
-    const text=j.choices?.[0]?.message?.content||"";
+    const text=(j.choices&&j.choices[0]&&j.choices[0].message&&j.choices[0].message.content)||"";
     const m=text.match(/\{[\s\S]*\}/);if(!m)throw new Error('模型未返回JSON');
     const r=JSON.parse(m[0]);
     window._lastAI={similar:r.similar||[],guide:r.guide||[]};
@@ -776,7 +784,7 @@ async function genQuiz(){
         const resp=await fetch(CFG.base,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+CFG.key},
           body:JSON.stringify({model:CFG.model,messages:[{role:'user',content:`基于以下错题风格，生成${Math.min(num,pick.length)}道变式练习题，输出JSON数组[{"q":"题目","a":"答案"}]。参考:\n${sample}`}],temperature:0.6})});
         if(!resp.ok)throw new Error('HTTP '+resp.status);
-        const j=await resp.json();const text=j.choices?.[0]?.message?.content||"";const m=text.match(/\[[\s\S]*\]/);
+        const j=await resp.json();const text=(j.choices&&j.choices[0]&&j.choices[0].message&&j.choices[0].message.content)||"";const m=text.match(/\[[\s\S]*\]/);
         if(m){const arr=JSON.parse(m[0]);if(Array.isArray(arr)&&arr.length){items=arr.map((x,i)=>({q:x.q,a:x.a,id:pick[i%pick.length].id,similar:[]}));}}
       }
     }catch(e){toast('AI组卷失败，改用原题');}
