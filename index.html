@@ -496,7 +496,7 @@ function requireMember(feature){
 }
 function openAct(){
   var m=document.getElementById('actModal');if(m)m.classList.add('show');
-  bootMember();
+  renderMember();
   var inp=document.getElementById('actInput');if(inp)inp.value='';
   var msg=document.getElementById('actMsg');if(msg)msg.textContent='';
 }
@@ -878,7 +878,7 @@ function openAdd(){
 document.getElementById('fSubject').addEventListener('input',renderKpTags);
 document.getElementById('addBtn').onclick=openAdd;
 document.getElementById('actBtn').onclick=openAct;
-renderMember();
+bootMember();
 document.getElementById('closeAdd').onclick=()=>document.getElementById('addModal').classList.remove('show');
 const drop=document.getElementById('drop'),fileIn=document.getElementById('fileIn');
 drop.onclick=()=>fileIn.click();
