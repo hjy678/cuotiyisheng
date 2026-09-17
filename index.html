@@ -358,18 +358,22 @@
 
 <script>
 // ===== 会员系统 v2：中台签发令牌 + 在线校验门禁 =====
+// 用法：把本文件内容整块替换 app 里的原有会员模块（独占一个 <script> 块）。
+// 只需改下面 4 个常量，其余原样保留 —— 不要自己重写，坑都在这份实现里。
+//
 // 安全模型：
 //   1) 激活码核销由中台 /api/redeem 完成，服务端签发 HMAC 令牌（前端无法伪造）
 //   2) 令牌是唯一凭据，存 localStorage；手改 localStorage 造不出合法签名
 //   3) 开会员功能前调 /api/verify 在线验签（含黑名单/系统隔离/设备绑定）
 //   4) 校验结果本地缓存 24 小时，正常用户几乎无感
-//   5) 离线宽限：连续离线最多 3 天，超时要求联网复核（避免断网锁死）
-const ACT_BACKEND='https://hjy3-member-hub.app.workbuddy.host';
-const ACT_SYSTEM='cuotiyisheng';
-const ACT_STORE='cuotiyisheng_activation';
-const ACT_FP_KEY='cuotiyisheng_fp';
-const ACT_TTL=24*60*60*1000;      // 在线校验结果缓存 24h
-const ACT_OFFLINE_GRACE=3*24*60*60*1000; // 离线宽限 3 天
+//   5) 离线宽限：距最后一次成功联网最多 3 天，超时要求联网复核
+// 兼容铁律：微信内核 Chromium~79 不支持可选链 ?. 与箭头函数 → 全用 var/function
+const ACT_BACKEND='https://hjy3-member-hub.app.workbuddy.host';  // ← 居中台基址，一般不用改
+const ACT_SYSTEM='cuotiyisheng';          // ← 改成在中台注册的 system id
+const ACT_STORE='cuotiyisheng_activation';   // ← 改成 <app>_activation
+const ACT_FP_KEY='cuotiyisheng_fp';          // ← 改成 <app>_fp
+const ACT_TTL=24*60*60*1000;            // 在线校验结果缓存 24h
+const ACT_OFFLINE_GRACE=3*24*60*60*1000;// 离线宽限 3 天
 
 function getActivation(){try{return JSON.parse(localStorage.getItem(ACT_STORE)||'null');}catch(e){return null;}}
 function setActivation(a){try{localStorage.setItem(ACT_STORE,JSON.stringify(a));}catch(e){}}
@@ -399,30 +403,27 @@ function renderMember(){
   var on=isActivated();
   var a=getActivation();
   if(badge)badge.style.display=on?'inline-block':'none';
-  if(st)st.textContent=on?('已激活 · '+(a.plan||'会员')+' · 至 '+fmtExp(a.expire)):'未激活 · 免费版';
+  if(st)st.textContent=on?('已激活 · '+((a&&a.plan)||'会员')+' · 至 '+fmtExp(a&&a.expire)):'未激活 · 免费版';
+  // ↓ 按你的 app 改入口按钮（id / 文案）
   [['quizBtn','📝 组卷'],['bookBtn','🖨 错题本'],['preExamBtn','⚡ 考前速览']].forEach(function(p){
     var b=document.getElementById(p[0]);
     if(b)b.textContent=p[1]+(on?'':' 🔒');
   });
 }
-// === 在线校验：拿令牌回中台验签 ===
-// 返回 Promise<{ok:boolean, reason?:string}>
-// 缓存策略：verifyAt 距今 < ACT_TTL 且结论为 ok → 直接用缓存，不打网络
-// ⚠️ 缓存必须绑定「令牌本身」：光有 verified 标记是可被伪造的，
-//    所以缓存里额外存 tokenSig（令牌的短指纹），校验时比对；
-//    改了 token 或伪造 verified 标记 → tokenSig 对不上 → 强制回服务端。
+// 令牌短指纹（djb2）—— 用于把缓存绑定到具体令牌，防止伪造 verified 标记绕过
 function tokSig(t){
   var h=5381,i=0;
   t=String(t||'');
   for(i=0;i<t.length;i++){h=((h<<5)+h+t.charCodeAt(i))>>>0;}
   return t.length.toString(36)+'_'+h.toString(36);
 }
+// === 在线校验：拿令牌回中台验签 ===
+// 返回 Promise<{ok:boolean, reason?:string}>
 function verifyToken(force){
   var a=getActivation();
   var token=localToken();
   if(!token)return Promise.resolve({ok:false,reason:'no_token'});
-  // 未过期缓存（force=true 时跳过缓存，如刚激活后主动复核）
-  // 注意：必须 verified===true 且 tokenSig 与当前 token 指纹一致，缓存才可信
+  // 未过期缓存：必须 verified===true 且 tokenSig 与当前令牌指纹一致，缓存才可信
   if(!force&&a.verifyAt&&a.verified===true&&a.tokenSig&&a.tokenSig===tokSig(token)
      &&(Date.now()-a.verifyAt)<ACT_TTL){
     return Promise.resolve({ok:true,cached:true,level:a.plan,expireAt:a.expire});
@@ -433,7 +434,7 @@ function verifyToken(force){
     .then(function(r){return r.json();})
     .then(function(j){
       if(j&&j.ok){
-        // 服务端确认：刷新本地记录（以服务端为准，纠正本地被篡改的 expire/plan）
+        // 服务端确认：以服务端为准，纠正本地被篡改的 expire/plan
         a.plan=j.level||a.plan; a.expire=j.expireAt||0; a.system=ACT_SYSTEM;
         a.token=token;
         a.verified=true; a.verifyAt=Date.now(); a.tokenSig=tokSig(token);
@@ -441,15 +442,12 @@ function verifyToken(force){
         setActivation(a);
         return {ok:true,level:a.plan,expireAt:a.expire};
       }
-      // 服务端明确否决 → 立即清除本地凭据，防止继续用
+      // 服务端明确否决 → 立即清除本地凭据
       clearActivation();
       return {ok:false,reason:(j&&j.reason)||'denied',msg:(j&&j.msg)||''};
     })
     .catch(function(){
-      // 网络失败：按本地凭据给离线宽限
-      // 但"离线放行"也必须验 tokenSig —— 阻止"伪造 token + 断网"绕过
-      // 离线宽限起点 = 最后一次成功联网（lastOnlineAt），不是首次失败时间，
-      // 这样"激活后永远断网"最多也就宽限 3 天，不会无限用下去。
+      // 网络失败：按本地凭据给离线宽限；但也必须验 tokenSig（挡"伪造 token + 断网"）
       var b=getActivation();
       if(!b||!b.token)return {ok:false,reason:'offline_no_cache'};
       if(b.tokenSig!==tokSig(b.token))return {ok:false,reason:'offline_untrusted'};
@@ -463,11 +461,9 @@ function verifyToken(force){
       return {ok:false,reason:'offline_expired',msg:'离线时间过长，请联网后重试'};
     });
 }
-// === 门禁：带在线校验（异步）===
-// 用法：onclick="guardFeature('组卷',function(){ ...打开弹窗... })"
-// 兼容旧写法：requireMember('组卷') 仍可用（会自行放行/弹窗，但不等校验完成）
+// === 门禁入口：所有付费功能都走这里 ===
+// 用法：onclick="guardFeature('组卷',function(){ ...打开付费弹窗... })"
 function guardFeature(feature,allowed,denied){
-  // 先本地快速判：连令牌都没有，直接弹激活窗（省一次网络）
   if(!localToken()){
     toast('「'+feature+'」为会员专享，点右上角👑会员激活');
     openAct();
@@ -484,14 +480,14 @@ function guardFeature(feature,allowed,denied){
         legacy_token:'会员凭证版本过旧，请重新激活',blacklisted:'该会员已被停用，请联系客服',
         wrong_system:'该激活码不适用于当前系统',device_mismatch:'会员与当前设备不匹配，请在本设备使用',
         offline_expired:'离线时间过长，请联网后重试',offline_untrusted:'会员校验未通过，请联网后重试',
-        offline_no_cache:'请先联网激活会员',denied:'会员校验未通过'};
+        offline_no_cache:'请先联网激活会员',offline_not_activated:'请先联网激活会员',denied:'会员校验未通过'};
       toast(reasons[v.reason]||v.msg||'会员校验未通过');
       openAct();
       if(denied)denied();
     }
   });
 }
-// 保留旧接口名（部分调用点可能仍引用）
+// 保留旧接口名（兼容历史调用点；新代码请用 guardFeature）
 function requireMember(feature){
   if(isActivated())return true;
   toast('「'+feature+'」为会员专享，点右上角👑会员激活');
@@ -500,7 +496,7 @@ function requireMember(feature){
 }
 function openAct(){
   var m=document.getElementById('actModal');if(m)m.classList.add('show');
-  renderMember();
+  bootMember();
   var inp=document.getElementById('actInput');if(inp)inp.value='';
   var msg=document.getElementById('actMsg');if(msg)msg.textContent='';
 }
@@ -515,7 +511,7 @@ function doActivate(){
     .then(function(r){return r.json();})
     .then(function(j){
       if(j.ok){
-        // 关键：存下服务端签发的 token（这是唯一凭据）
+        // ⚠️ 关键：必须存下 j.token —— 这是唯一会员凭据，丢了就退回"纯客户端门禁"
         setActivation({plan:j.level,expire:j.expireAt||0,system:ACT_SYSTEM,token:j.token,
                        at:Date.now(),verified:true,verifyAt:Date.now(),tokenSig:tokSig(j.token),
                        lastOnlineAt:Date.now(),offlineSince:0});
@@ -529,11 +525,28 @@ function doActivate(){
     })
     .catch(function(){if(msg){msg.style.color='#e33';msg.textContent='⚠️ 联网验证失败，请检查网络后重试';}});
 }
-// 启动时后台静默复核一次（不阻塞界面）
-function silentRecheck(){
-  if(!localToken())return;
-  verifyToken(true).then(function(v){if(v.ok)renderMember();else renderMember();});
+// === 启动引导：渲染状态 + 后台静默复核一次（不阻塞界面）===
+// ⚠️ 必须把 bootMember() 挂到脚本末尾（DOM ready 之后）调用一次。
+//    第一版只有 silentRecheck 但从没被调用 = 死代码，"拉黑后已激活用户下次打开自动失效"就没生效。
+//    在 app 里把原来的 `renderMember();` 换成 `bootMember();` 即可（模板自带 renderMember 调用）。
+function bootMember(){
+  renderMember();
+  if(!localToken())return;                  // 没令牌不用打网络
+  verifyToken(true).then(function(v){       // force=true：跳过缓存，拿服务端最新结论
+    if(!v.ok){
+      var reasons={blacklisted:'该会员已被停用，请联系客服',
+        wrong_system:'该激活码不适用于当前系统',
+        device_mismatch:'会员与当前设备不匹配，请在本设备使用',
+        bad_token:'会员凭证无效，请重新激活',
+        legacy_token:'会员凭证版本过旧，请重新激活'};
+      toast(reasons[v.reason]||'会员状态已变更，请重新激活');
+    }
+    renderMember();
+  });
 }
+// 兼容旧名（历史 app 里调的是 silentRecheck）
+function silentRecheck(){bootMember();}
+
 </script>
 <script>
 /* ============ 存储层 ============ */
