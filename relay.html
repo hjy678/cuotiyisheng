@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>relay</title>
+</head>
+<body>
+<script>
+(function () {
+  var HUB = 'https://hjy3-member-hub.app.workbuddy.host';
+  var SERVER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+  var DEFAULT_SYSTEM = 'zhinengjiangti';
+
+  function q(name) {
+    try { return new URLSearchParams(location.search).get(name) || ''; }
+    catch (e) { return ''; }
+  }
+  function done(name, obj) {
+    if (!name) return;
+    try {
+      window.parent.__relayPayload = window.parent.__relayPayload || {};
+      window.parent.__relayPayload[name] = obj;
+    } catch (e) {}
+  }
+  function loadScript(src, onerror) {
+    var s = document.createElement('script');
+    s.src = src;
+    s.onerror = function () { if (onerror) onerror(); };
+    document.head.appendChild(s);
+  }
+
+  var cb = q('cb');
+  var op = q('op') || 'redeem';
+  var system = q('system') || DEFAULT_SYSTEM;
+
+  if (op === 'verify') {
+    var vqs = 'token=' + encodeURIComponent(q('token')) +
+              '&fp=' + encodeURIComponent(q('fp')) +
+              '&system=' + encodeURIComponent(system);
+    fetch(HUB + '/api/verify?' + vqs, { headers: { 'User-Agent': SERVER_UA } })
+      .then(function (r) { return r.json(); })
+      .then(function (j) { done(cb, j); callback(cb); })
+      .catch(function (e) { done(cb, { ok: false, reason: 'relay_error' }); callback(cb); });
+  } else {
+    fetch(HUB + '/api/redeem', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'User-Agent': SERVER_UA },
+      body: JSON.stringify({ code: q('code'), fp: q('fp'), system: system })
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (j) { done(cb, j); callback(cb); })
+      .catch(function (e) { done(cb, { ok: false, reason: 'relay_error' }); callback(cb); });
+  }
+
+  function callback(name) {
+    if (!name) return;
+    loadScript('relay.js?cb=' + encodeURIComponent(name), function () {
+      done(name, { ok: false, reason: 'relay_error' });
+      try { window.parent[name] && window.parent[name]({ ok: false, reason: 'relay_error' }); } catch (e) {}
+    });
+  }
+})();
+</script>
+</body>
+</html>
