@@ -400,7 +400,7 @@
         <h3 style="font-size:15px;margin:24px 0 10px;">使用小提示</h3>
         <ul class="hint-list">
           <li>首次使用请点右上角「未配置 API Key」填入智谱 API Key（免费）。</li>
-          <li>题目尽量拍清晰，避免反光和遮挡。</li>
+          <li>题目尽量拍清晰，避免��光和遮挡。</li>
           <li>带有答案、解析或解题步骤的图片，生成更符合教学需求。</li>
           <li>一般图片只含一道题，效果更好。</li>
           <li>未配置 Key 时会用内置演示题生成，供体验界面。</li>
@@ -630,7 +630,7 @@ const PREVIEW_TEXTS = {
   voice: '同学你好，我是你的讲题老师，这道题我们这样来想。',
   speed: '同学你好，我是你的讲题老师，这道题我们这样来想。',
   style: {
-    '循序渐进': '我们先看第一步，慢慢来，一步一步带你解出这道题。',
+    '循序渐进': '我们先看第一步���慢慢来，一步一步带你解出这道题。',
     '直击考点': '这道题考的是二次函数的顶点，直接抓住这个关键点。',
     '启发引导': '想一想，x 等于多少的时候，函数会取到最值呢？',
     '幽默风趣': '哈哈，别怕这道题，它就是个纸老虎，看我三招拿下它。'
@@ -805,7 +805,7 @@ async function startGenerate() {
 
   if (!hasApiKey()) {
     await fakeDelay(1200);
-    showGenerating('未配置 API Key，使用演示题', '点右上角配置 Key 后可识别真实题目');
+    showGenerating('未配置 API Key，使用演示��', '点右上角配置 Key 后可识别真实题目');
     setProgress(100);
     await fakeDelay(800);
     resultData = buildDemoData();
@@ -911,7 +911,7 @@ function buildPrompt() {
     '启发引导': '多用提问引导学生思考，先问后答',
     '幽默风趣': '语言生动有趣，可适当打比方举例'
   };
-  const dur = durMap[currentDuration] || durMap['标准版'];
+  const dur = durMap[currentDuration] || durMap['标准���'];
   const styleDesc = styleMap[currentStyle] || styleMap['循序渐进'];
 
   return `你是资深中小学数学/理科老师。请仔细识别图片中的题目（可能含答案与解析），据此生成一份讲题视频脚本。
@@ -960,7 +960,7 @@ function parseResult(raw) {
     subject: obj.subject || '数学',
     type: obj.type || '题目讲解',
     question: questionText,
-    answer: obj.answer || '（未提供答案）',
+    answer: obj.answer || '（未提供答��）',
     analysis: obj.analysis || '（未提供解析）',
     chapters: chapters,
     function_expr: typeof obj.function_expr === 'string' ? obj.function_expr.trim() : '',
@@ -1388,7 +1388,7 @@ function getVoiceParams(voice) {
 function getSpeedRate(speed) {
   return { '慢速': 0.8, '标准': 1.0, '快速': 1.25 }[speed] || 1.0;
 }
-// 预热语音列表（浏览器首次 getVoices 常为空，需等 voiceschanged 事件）
+// 预热语音列表（浏览器首次 getVoices 常为空，��等 voiceschanged 事件）
 if (window.speechSynthesis) {
   loadVoices();
   window.speechSynthesis.onvoiceschanged = function () { loadVoices(); updateVoiceDiag(); };
@@ -1677,9 +1677,9 @@ function verifyCode(code) {
         且以 <script> 方式加载，天然不受跨域与 UA 拦截影响
      ③ 绝对地址直连新中台 —— 兜底通道，同样可能被微信 UA 拦截
    中台本身不做任何改动，一码一用的核销语义完全保留。 */
-const ACT_SYSTEM = 'zhinengjiangti';
+const ACT_SYSTEM = 'zhinenjiangti';
 const ACT_BACKEND = 'https://hjy3-member-hub.app.workbuddy.host';
-const ACT_RELAY = 'https://hjy678.github.io/cuotiyisheng/jiangti/relay.html';
+const ACT_RELAY = 'https://hjy-apps-d5g16nx4y5a5a7fb6-1492786962.ap-shanghai.app.tcloudbase.com/relay';  // CloudBase 服务端中继（Web 云函数），微信 UA 可达；旧 JSONP relay.html 已废弃
 const IS_WX = /MicroMessenger/i.test(navigator.userAgent || '');
 function getDeviceFp() {
   let fp = localStorage.getItem('ai_teach_fp');
@@ -1707,26 +1707,14 @@ async function redeemSameOrigin(code, fp) {
 }
 // 通道 ②：GitHub Pages 中继（JSONP 风格，微信内可用）
 function redeemViaRelay(code, fp) {
-  return new Promise(function (resolve) {
-    let done = false;
-    const cbName = '__relay_cb_' + Date.now() + '_' + Math.floor(Math.random() * 1e6);
-    const s = document.createElement('script');
-    const finish = function (data) {
-      if (done) return; done = true;
-      try { clearTimeout(tid); } catch (e) {}
-      try { delete window[cbName]; } catch (e) {}
-      try { window.__relayPayload[cbName] = null; } catch (e) {}
-      try { if (s.parentNode) s.parentNode.removeChild(s); } catch (e) {}
-      resolve(normRedeem(data));
-    };
-    const tid = setTimeout(function () { finish(null); }, 9000);
-    window.__relayPayload = window.__relayPayload || {};
-    window[cbName] = finish;
-    s.onerror = function () { finish(null); };
-    var qs = new URLSearchParams({ system: ACT_SYSTEM, code: code, fp: fp, cb: cbName });
-    s.src = ACT_RELAY + '?' + qs.toString();
-    document.head.appendChild(s);
-  });
+  // CloudBase 服务端中继：服务端转发 /api/redeem 到新中台，微信 UA 可达
+  return fetch(ACT_RELAY + '/api/redeem', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code: code, fp: fp, system: ACT_SYSTEM })
+  }).then(function (r) { return r.json(); })
+    .then(function (data) { return normRedeem(data); })
+    .catch(function () { return null; });
 }
 // 通道 ③：绝对地址直连新中台
 async function redeemDirect(code, fp) {
@@ -1749,7 +1737,7 @@ async function redeemWithBackend(code) {
     try {
       const r = await order[i](code, fp2);
       if (r && r.ok) return r;
-      // 关于激活码本身的结论（用过/作废/停用/不存在/不属于本系统）＝终局，不再换通道
+      // 关于激活码本身的结论（用��/作废/停用/不存在/不属于本系统）＝终局，不再换通道
       if (r && r.reason && /already_used|void|blacklisted|not_found|wrong_system|expired/i.test(r.reason)) return r;
       last = r || last;
     } catch (e) {
