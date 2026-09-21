@@ -370,6 +370,8 @@
 // 兼容铁律：微信内核 Chromium~79 不支持可选链 ?. 与箭头函数 → 全用 var/function
 const ACT_BACKEND='https://hjy3-member-hub.app.workbuddy.host';  // ← 居中台基址，一般不用改
 const ACT_SYSTEM='cuotiyisheng';          // ← 改成在中台注册的 system id
+const RELAY_BASE='https://hjy-apps-d5g16nx4y5a5a7fb6-1492786962.ap-shanghai.app.tcloudbase.com/relay';   // ← 微信内激活中继基址（CloudBase Web函数）；微信UA下网关拦直连，由中继代发 redeem/verify
+function isWx(){ return /MicroMessenger/i.test(navigator.userAgent||''); }
 const ACT_STORE='cuotiyisheng_activation';   // ← 改成 <app>_activation
 const ACT_FP_KEY='cuotiyisheng_fp';          // ← 改成 <app>_fp
 const ACT_TTL=24*60*60*1000;            // 在线校验结果缓存 24h
@@ -428,38 +430,49 @@ function verifyToken(force){
      &&(Date.now()-a.verifyAt)<ACT_TTL){
     return Promise.resolve({ok:true,cached:true,level:a.plan,expireAt:a.expire});
   }
-  var url=ACT_BACKEND+'/api/verify?token='+encodeURIComponent(token)
+  // 微信内且未配中继：禁止发直连（网关会按微信UA拦 403），零网络请求，直接走离线判定
+  if(isWx() && !RELAY_BASE){
+    return Promise.resolve(offlineJudge(a));
+  }
+  // 三通道降级：微信内 中继→直连；非微信 直连→中继（仅"网络层失败"才切下一个通道，
+  // 拿到业务响应即终局，不再重试，避免重复消耗/误伤已用码）
+  var relay = RELAY_BASE ? RELAY_BASE.replace(/\/$/,'') : '';
+  var order = isWx() ? [relay, ACT_BACKEND] : [ACT_BACKEND, relay];
+  order = order.filter(Boolean);
+  return tryVerify(order, token, 0, a);
+}
+// 离线判定（抽自原 catch 分支）：必须验 tokenSig，挡"伪造 token + 断网"
+function offlineJudge(a){
+  if(!a||!a.token)return {ok:false,reason:'offline_no_cache'};
+  if(a.tokenSig!==tokSig(a.token))return {ok:false,reason:'offline_untrusted'};
+  var since=a.lastOnlineAt||a.verifyAt||a.at||0;
+  if(!since)return {ok:false,reason:'offline_not_activated'};
+  var off=(Date.now()-since)<ACT_OFFLINE_GRACE;
+  if(off&&(!a.expire||a.expire>Date.now())){
+    if(!a.offlineSince){a.offlineSince=Date.now();setActivation(a);}
+    return {ok:true,offline:true,level:a.plan,expireAt:a.expire};
+  }
+  return {ok:false,reason:'offline_expired',msg:'离线时间过长，请联网后重试'};
+}
+function verifyOnce(base, token){
+  var url=base+'/api/verify?token='+encodeURIComponent(token)
         +'&fp='+encodeURIComponent(deviceFp())+'&system='+encodeURIComponent(ACT_SYSTEM);
-  return fetch(url,{method:'GET'})
-    .then(function(r){return r.json();})
-    .then(function(j){
-      if(j&&j.ok){
-        // 服务端确认：以服务端为准，纠正本地被篡改的 expire/plan
-        a.plan=j.level||a.plan; a.expire=j.expireAt||0; a.system=ACT_SYSTEM;
-        a.token=token;
-        a.verified=true; a.verifyAt=Date.now(); a.tokenSig=tokSig(token);
-        a.lastOnlineAt=Date.now(); a.offlineSince=0;
-        setActivation(a);
-        return {ok:true,level:a.plan,expireAt:a.expire};
-      }
-      // 服务端明确否决 → 立即清除本地凭据
-      clearActivation();
-      return {ok:false,reason:(j&&j.reason)||'denied',msg:(j&&j.msg)||''};
-    })
-    .catch(function(){
-      // 网络失败：按本地凭据给离线宽限；但也必须验 tokenSig（挡"伪造 token + 断网"）
-      var b=getActivation();
-      if(!b||!b.token)return {ok:false,reason:'offline_no_cache'};
-      if(b.tokenSig!==tokSig(b.token))return {ok:false,reason:'offline_untrusted'};
-      var since=b.lastOnlineAt||b.verifyAt||b.at||0;
-      if(!since)return {ok:false,reason:'offline_not_activated'};
-      var off=(Date.now()-since)<ACT_OFFLINE_GRACE;
-      if(off&&(!b.expire||b.expire>Date.now())){
-        if(!b.offlineSince){b.offlineSince=Date.now();setActivation(b);}
-        return {ok:true,offline:true,level:b.plan,expireAt:b.expire};
-      }
-      return {ok:false,reason:'offline_expired',msg:'离线时间过长，请联网后重试'};
-    });
+  return fetch(url,{method:'GET'}).then(function(r){return r.json();});
+}
+function tryVerify(order, token, idx, a){
+  if(idx>=order.length) return Promise.resolve(offlineJudge(a));
+  return verifyOnce(order[idx], token).then(function(j){
+    if(j&&j.ok){
+      a.plan=j.level||a.plan; a.expire=j.expireAt||0; a.system=ACT_SYSTEM;
+      a.token=token;
+      a.verified=true; a.verifyAt=Date.now(); a.tokenSig=tokSig(token);
+      a.lastOnlineAt=Date.now(); a.offlineSince=0;
+      setActivation(a);
+      return {ok:true,level:a.plan,expireAt:a.expire};
+    }
+    clearActivation();
+    return {ok:false,reason:(j&&j.reason)||'denied',msg:(j&&j.msg)||''};
+  }).catch(function(){ return tryVerify(order, token, idx+1, a); });
 }
 // === 门禁入口：所有付费功能都走这里 ===
 // 用法：onclick="guardFeature('组卷',function(){ ...打开付费弹窗... })"
@@ -505,25 +518,38 @@ function doActivate(){
   var code=el?el.value.trim().toUpperCase():'';
   var msg=document.getElementById('actMsg');
   if(!code){if(msg){msg.style.color='#e33';msg.textContent='请输入激活码';}return;}
+  // 微信内且未配中继：零网络请求，直接引导去浏览器打开（不白等、不弹无意义的联网失败）
+  if(isWx() && !RELAY_BASE){ showWxGuide(); return; }
   if(msg){msg.style.color='';msg.textContent='联网验证中…';}
   var fp=deviceFp();
-  fetch(ACT_BACKEND+'/api/redeem',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:code,fp:fp,system:ACT_SYSTEM})})
-    .then(function(r){return r.json();})
-    .then(function(j){
-      if(j.ok){
-        // ⚠️ 关键：必须存下 j.token —— 这是唯一会员凭据，丢了就退回"纯客户端门禁"
-        setActivation({plan:j.level,expire:j.expireAt||0,system:ACT_SYSTEM,token:j.token,
-                       at:Date.now(),verified:true,verifyAt:Date.now(),tokenSig:tokSig(j.token),
-                       lastOnlineAt:Date.now(),offlineSince:0});
-        if(msg){msg.style.color='#1a9';msg.textContent='✅ 激活成功！'+j.level+(j.expireAt?(' · 至 '+fmtExp(j.expireAt)):' · 永久');}
-        renderMember();toast('会员已激活');
-        setTimeout(function(){var mm=document.getElementById('actModal');if(mm)mm.classList.remove('show');},900);
-      }else{
-        var reasons={not_found:'激活码无效，请检查后重试',void:'该激活码已作废',already_used:'该激活码已被使用（一码一用）',blacklisted:'该激活码已被停用',wrong_system:'该激活码不适用于当前系统'};
-        if(msg){msg.style.color='#e33';msg.textContent='❌ '+(reasons[j.reason]||'激活失败');}
-      }
-    })
-    .catch(function(){if(msg){msg.style.color='#e33';msg.textContent='⚠️ 联网验证失败，请检查网络后重试';}});
+  var relay = RELAY_BASE ? RELAY_BASE.replace(/\/$/,'') : '';
+  var order = isWx() ? [relay, ACT_BACKEND] : [ACT_BACKEND, relay];
+  order = order.filter(Boolean);
+  tryRedeem(order, code, fp, 0, msg);
+}
+function redeemOnce(base, code, fp){
+  return fetch(base+'/api/redeem',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:code,fp:fp,system:ACT_SYSTEM})}).then(function(r){return r.json();});
+}
+function tryRedeem(order, code, fp, idx, msg){
+  if(idx>=order.length){
+    if(msg){msg.style.color='#e33';msg.textContent='⚠️ 联网验证失败，请检查网络后重试';}
+    return;
+  }
+  redeemOnce(order[idx], code, fp).then(function(j){
+    if(j.ok){
+      // ⚠️ 关键：必须存下 j.token —— 这是唯一会员凭据，丢了就退回"纯客户端门禁"
+      setActivation({plan:j.level,expire:j.expireAt||0,system:ACT_SYSTEM,token:j.token,
+                     at:Date.now(),verified:true,verifyAt:Date.now(),tokenSig:tokSig(j.token),
+                     lastOnlineAt:Date.now(),offlineSince:0});
+      if(msg){msg.style.color='#1a9';msg.textContent='✅ 激活成功！'+j.level+(j.expireAt?(' · 至 '+fmtExp(j.expireAt)):' · 永久');}
+      renderMember();toast('会员已激活');
+      setTimeout(function(){var mm=document.getElementById('actModal');if(mm)mm.classList.remove('show');},900);
+    }else{
+      // 业务终局（not_found/void/already_used/blacklisted/wrong_system）→ 直接显示，不切通道
+      var reasons={not_found:'激活码无效，请检查后重试',void:'该激活码已作废',already_used:'该激活码已被使用（一码一用）',blacklisted:'该激活码已被停用',wrong_system:'该激活码不适用于当前系统'};
+      if(msg){msg.style.color='#e33';msg.textContent='❌ '+(reasons[j.reason]||'激活失败');}
+    }
+  }).catch(function(){ tryRedeem(order, code, fp, idx+1, msg); });  // 仅网络层失败才切下一通道
 }
 // === 启动引导：渲染状态 + 后台静默复核一次（不阻塞界面）===
 // ⚠️ 必须把 bootMember() 挂到脚本末尾（DOM ready 之后）调用一次。
@@ -546,6 +572,31 @@ function bootMember(){
 }
 // 兼容旧名（历史 app 里调的是 silentRecheck）
 function silentRecheck(){bootMember();}
+// 微信内未配中继时的激活引导：不白等，明确告诉去浏览器打开
+function showWxGuide(){
+  var msg=document.getElementById('actMsg');
+  if(msg){
+    msg.style.color='#e33';
+    msg.innerHTML='微信内无法直接联网激活。<br>请点右上角 <b>···</b> →「在浏览器打开」完成激活；'+
+      '或点下方复制本页链接去浏览器打开。<br>'+
+      '<button type="button" onclick="wxCopyLink()">复制本页链接</button> '+
+      '<button type="button" onclick="wxRecheck()">我已激活，重新检测</button>';
+  }
+  toast('微信内请点右上角 ··· 在浏览器打开');
+}
+function wxCopyLink(){
+  try{ if(navigator.clipboard) navigator.clipboard.writeText(location.href); }catch(e){}
+  try{ var ta=document.createElement('textarea'); ta.value=location.href; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); }catch(e){}
+  toast('已复制本页链接，去浏览器打开激活');
+}
+function wxRecheck(){
+  if(localToken()){
+    verifyToken(true).then(function(v){
+      if(v.ok){ renderMember(); toast('已激活'); var mm=document.getElementById('actModal'); if(mm)mm.classList.remove('show'); }
+      else { toast('尚未激活，请先在浏览器打开本页激活'); }
+    });
+  } else { toast('尚未激活，请先在浏览器打开本页激活'); }
+}
 
 </script>
 <script>
