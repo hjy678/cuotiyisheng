@@ -1679,6 +1679,16 @@ function verifyCode(code) {
    中台本身不做任何改动，一码一用的核销语义完全保留。 */
 const ACT_SYSTEM = 'zhinenjiangti';
 const ACT_BACKEND = 'https://hjy3-member-hub.app.workbuddy.host';
+
+  // [HUB-SC 2026-11-12] 网关新增 sharecode 门槛：直连中台的 URL 自动附加，中继/同源/第三方原样放行
+  var HUB_SHARECODE = 'LOFWNWWOVH';
+  function hubSc(u) {
+    u = String(u);
+    if (u.indexOf('hjy3-member-hub.app.workbuddy.host') < 0) return u;
+    if (u.indexOf('sharecode=') >= 0) return u;
+    return u + (u.indexOf('?') >= 0 ? '&' : '?') + 'sharecode=' + HUB_SHARECODE;
+  }
+
 const ACT_RELAY = 'https://hjy-apps-d5g16nx4y5a5a7fb6-1492786962.ap-shanghai.app.tcloudbase.com/relay';  // CloudBase 服务端中继（Web 云函数），微信 UA 可达；旧 JSONP relay.html 已废弃
 const IS_WX = /MicroMessenger/i.test(navigator.userAgent || '');
 function getDeviceFp() {
@@ -1697,7 +1707,7 @@ function normRedeem(data) {
 }
 // 通道 ①：同源 / 相对路径
 async function redeemSameOrigin(code, fp) {
-  const res = await fetch('api/redeem', {
+  const res = await fetch(hubSc('api/redeem'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code: code, fp: fp, system: ACT_SYSTEM })
@@ -1708,7 +1718,7 @@ async function redeemSameOrigin(code, fp) {
 // 通道 ②：GitHub Pages 中继（JSONP 风格，微信内可用）
 function redeemViaRelay(code, fp) {
   // CloudBase 服务端中继：服务端转发 /api/redeem 到新中台，微信 UA 可达
-  return fetch(ACT_RELAY + '/api/redeem', {
+  return fetch(hubSc(ACT_RELAY + '/api/redeem'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code: code, fp: fp, system: ACT_SYSTEM })
@@ -1718,7 +1728,7 @@ function redeemViaRelay(code, fp) {
 }
 // 通道 ③：绝对地址直连新中台
 async function redeemDirect(code, fp) {
-  const res = await fetch(ACT_BACKEND + '/api/redeem', {
+  const res = await fetch(hubSc(ACT_BACKEND + '/api/redeem'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code: code, fp: fp, system: ACT_SYSTEM })
