@@ -369,6 +369,16 @@
 //   5) 离线宽限：距最后一次成功联网最多 3 天，超时要求联网复核
 // 兼容铁律：微信内核 Chromium~79 不支持可选链 ?. 与箭头函数 → 全用 var/function
 const ACT_BACKEND='https://hjy3-member-hub.app.workbuddy.host';  // ← 居中台基址，一般不用改
+
+  // [HUB-SC 2026-11-12] 网关新增 sharecode 门槛：直连中台的 URL 自动附加，中继/同源/第三方原样放行
+  var HUB_SHARECODE = 'LOFWNWWOVH';
+  function hubSc(u) {
+    u = String(u);
+    if (u.indexOf('hjy3-member-hub.app.workbuddy.host') < 0) return u;
+    if (u.indexOf('sharecode=') >= 0) return u;
+    return u + (u.indexOf('?') >= 0 ? '&' : '?') + 'sharecode=' + HUB_SHARECODE;
+  }
+
 const ACT_SYSTEM='cuotiyisheng';          // ← 改成在中台注册的 system id
 const RELAY_BASE='https://hjy-apps-d5g16nx4y5a5a7fb6-1492786962.ap-shanghai.app.tcloudbase.com/relay';   // ← 微信内激活中继基址（CloudBase Web函数）；微信UA下网关拦直连，由中继代发 redeem/verify
 function isWx(){ return /MicroMessenger/i.test(navigator.userAgent||''); }
@@ -457,7 +467,7 @@ function offlineJudge(a){
 function verifyOnce(base, token){
   var url=base+'/api/verify?token='+encodeURIComponent(token)
         +'&fp='+encodeURIComponent(deviceFp())+'&system='+encodeURIComponent(ACT_SYSTEM);
-  return fetch(url,{method:'GET'}).then(function(r){return r.json();});
+  return fetch(hubSc(url),{method:'GET'}).then(function(r){return r.json();});
 }
 function tryVerify(order, token, idx, a){
   if(idx>=order.length) return Promise.resolve(offlineJudge(a));
@@ -528,7 +538,7 @@ function doActivate(){
   tryRedeem(order, code, fp, 0, msg);
 }
 function redeemOnce(base, code, fp){
-  return fetch(base+'/api/redeem',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:code,fp:fp,system:ACT_SYSTEM})}).then(function(r){return r.json();});
+  return fetch(hubSc(base+'/api/redeem'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:code,fp:fp,system:ACT_SYSTEM})}).then(function(r){return r.json();});
 }
 function tryRedeem(order, code, fp, idx, msg){
   if(idx>=order.length){
