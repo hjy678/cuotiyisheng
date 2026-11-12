@@ -10,6 +10,16 @@
 <script>
 (function () {
   var HUB = 'https://hjy3-member-hub.app.workbuddy.host';
+
+  // [HUB-SC 2026-11-12] 网关新增 sharecode 门槛：直连中台的 URL 自动附加，中继/同源/第三方原样放行
+  var HUB_SHARECODE = 'LOFWNWWOVH';
+  function hubSc(u) {
+    u = String(u);
+    if (u.indexOf('hjy3-member-hub.app.workbuddy.host') < 0) return u;
+    if (u.indexOf('sharecode=') >= 0) return u;
+    return u + (u.indexOf('?') >= 0 ? '&' : '?') + 'sharecode=' + HUB_SHARECODE;
+  }
+
   var SERVER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
   var DEFAULT_SYSTEM = 'zhinengjiangti';
 
@@ -39,12 +49,12 @@
     var vqs = 'token=' + encodeURIComponent(q('token')) +
               '&fp=' + encodeURIComponent(q('fp')) +
               '&system=' + encodeURIComponent(system);
-    fetch(HUB + '/api/verify?' + vqs, { headers: { 'User-Agent': SERVER_UA } })
+    fetch(hubSc(HUB + '/api/verify?' + vqs), { headers: { 'User-Agent': SERVER_UA } })
       .then(function (r) { return r.json(); })
       .then(function (j) { done(cb, j); callback(cb); })
       .catch(function (e) { done(cb, { ok: false, reason: 'relay_error' }); callback(cb); });
   } else {
-    fetch(HUB + '/api/redeem', {
+    fetch(hubSc(HUB + '/api/redeem'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'User-Agent': SERVER_UA },
       body: JSON.stringify({ code: q('code'), fp: q('fp'), system: system })
